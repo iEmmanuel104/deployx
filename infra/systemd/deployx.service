@@ -1,0 +1,33 @@
+[Unit]
+Description=DeployX Control Plane
+Documentation=https://deployx.dev/docs
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=deployx
+Group=deployx
+WorkingDirectory=/opt/deployx
+ExecStart=/usr/bin/node /opt/deployx/dist/index.js
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deployx
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/deployx/data /opt/deployx/builds /opt/deployx/logs
+PrivateTmp=true
+
+# Environment
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/deployx/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,93 @@
+networks:
+  proxy-network:
+    external: true
+  internal-network:
+    driver: bridge
+    internal: true
+
+volumes:
+  traefik-certs: {}
+  deployx-data: {}
+  deployx-builds: {}
+
+services:
+  traefik:
+    image: traefik:v3.2
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/certs
+      - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./infra/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - proxy-network
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: always
+    read_only: true
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      BUILD: 1
+      POST: 1
+      EXEC: 0
+      SERVICES: 0
+      SECRETS: 0
+      CONFIGS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal-network
+
+  api:
+    image: deployx/api:${DEPLOYX_VERSION:-latest}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - deployx-data:/data
+      - deployx-builds:/builds
+    env_file:
+      - .env
+    depends_on:
+      - docker-proxy
+    networks:
+      - proxy-network
+      - internal-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.deployx-api.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.deployx-api.tls=true"
+      - "traefik.http.routers.deployx-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.deployx-api.loadbalancer.server.port=3001"
+      - "traefik.http.routers.deployx-api.middlewares=security-headers@file"
+
+  dashboard:
+    image: deployx/dashboard:${DEPLOYX_VERSION:-latest}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - api
+    networks:
+      - proxy-network
+      - internal-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.deployx-dashboard.rule=Host(`${PLATFORM_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.deployx-dashboard.tls=true"
+      - "traefik.http.routers.deployx-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.services.deployx-dashboard.loadbalancer.server.port=3000"
+      - "traefik.http.routers.deployx-dashboard.middlewares=security-headers@file"
