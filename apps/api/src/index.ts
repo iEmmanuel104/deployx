@@ -102,7 +102,17 @@ async function main() {
   app.log.info(`DeployX API listening on http://${HOST}:${PORT}`);
 }
 
-main().catch((err) => {
-  console.error("Failed to start server:", err);
-  process.exit(1);
-});
+// Only start the server when this file is executed directly (not imported in tests).
+// In ESM, compare import.meta.url to the resolved argv[1] to detect direct execution.
+import { pathToFileURL } from "node:url";
+
+const entryUrl = process.argv[1]
+  ? pathToFileURL(process.argv[1]).href
+  : undefined;
+
+if (entryUrl === import.meta.url) {
+  main().catch((err) => {
+    console.error("Failed to start server:", err);
+    process.exit(1);
+  });
+}

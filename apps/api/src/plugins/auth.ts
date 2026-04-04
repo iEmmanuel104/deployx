@@ -13,7 +13,6 @@ declare module "fastify" {
 
 async function auth(fastify: FastifyInstance): Promise<void> {
   fastify.decorateRequest("authenticate", async function (this: FastifyRequest) {
-    // Stub: actual JWT verification will be added later
     const authHeader = this.headers.authorization;
     if (!authHeader?.startsWith("Bearer ")) {
       const error = new Error("Unauthorized") as Error & { statusCode: number };
@@ -22,7 +21,6 @@ async function auth(fastify: FastifyInstance): Promise<void> {
     }
 
     try {
-      // TODO: verify JWT and attach user to request
       await this.jwtVerify();
     } catch {
       const error = new Error("Invalid or expired token") as Error & { statusCode: number };

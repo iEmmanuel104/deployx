@@ -2,7 +2,9 @@ import { eq } from "drizzle-orm";
 import { deployments, projects } from "@deployx/db";
 import { buildWithNixpacks } from "@deployx/builder";
 import { BuildJobPayloadSchema } from "@deployx/types";
+import type { DeployJobPayload } from "@deployx/types";
 import type { JobContext } from "../processor.js";
+import { enqueueJob } from "../helpers.js";
 
 export async function handleBuildJob(ctx: JobContext): Promise<void> {
   const { job, db, logger } = ctx;
@@ -51,6 +53,37 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       .update(projects)
       .set({ imageTag: result.imageTag, updatedAt: now() })
       .where(eq(projects.id, payload.projectId));
+
+    // Enqueue follow-up deploy job
+    const projectRows = await db
+      .select()
+      .from(projects)
+      .where(eq(projects.id, payload.projectId))
+      .limit(1);
+
+    const project = projectRows[0];
+    if (project) {
+      const deployPayload: DeployJobPayload = {
+        projectId: payload.projectId,
+        deploymentId: payload.deploymentId,
+        imageTag: result.imageTag,
+        slug: project.slug,
+        port: payload.port,
+        envVars: payload.envVars,
+        platformDomain: process.env["PLATFORM_DOMAIN"],
+      };
+
+      await enqueueJob(db, {
+        deploymentId: payload.deploymentId,
+        type: "deploy",
+        payload: deployPayload,
+      });
+
+      logger.info(
+        { deploymentId: payload.deploymentId },
+        "Deploy job enqueued after build",
+      );
+    }
 
     logger.info(
       { imageTag: result.imageTag, durationMs: result.durationMs },
