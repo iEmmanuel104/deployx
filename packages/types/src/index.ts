@@ -61,6 +61,12 @@ export type BuildType = z.infer<typeof BuildTypeSchema>;
 export const SslStatusSchema = z.enum(["pending", "active", "error"]);
 export type SslStatus = z.infer<typeof SslStatusSchema>;
 
+// ─── Validation Patterns ────────────────────────────────────────────────────
+
+/** RFC-1123 compliant domain name pattern */
+export const DOMAIN_REGEX =
+  /^(?!-)[a-zA-Z0-9-]{1,63}(?<!-)(\.[a-zA-Z0-9-]{1,63})*\.[a-zA-Z]{2,}$/;
+
 // ─── Table Schemas ───────────────────────────────────────────────────────────
 
 export const UserSchema = z.object({
@@ -118,7 +124,12 @@ export type Deployment = z.infer<typeof DeploymentSchema>;
 export const DomainSchema = z.object({
   id: z.string().describe("ULID primary key"),
   project_id: z.string().min(1),
-  domain: z.string().min(1).describe("Globally unique"),
+  domain: z
+    .string()
+    .min(1)
+    .max(253)
+    .regex(DOMAIN_REGEX, "Must be a valid RFC-1123 domain name")
+    .describe("Globally unique, RFC-1123 compliant"),
   is_primary: z.number().int().min(0).max(1).default(0),
   ssl_status: SslStatusSchema.default("pending"),
   ssl_cert_exp: z.string().datetime().nullable().optional(),
