@@ -340,6 +340,65 @@ export const DeployxConfigSchema = z.object({
 });
 export type DeployxConfig = z.infer<typeof DeployxConfigSchema>;
 
+// ─── Builder Types ──────────────────────────────────────────────────────────
+
+export const BuildOptionsSchema = z.object({
+  sourceDir: z.string().min(1),
+  imageTag: z.string().min(1),
+  buildType: BuildTypeSchema,
+  buildCmd: z.string().nullable().optional(),
+  startCmd: z.string().nullable().optional(),
+  envVars: z.record(z.string(), z.string()).optional(),
+  noCache: z.boolean().default(false),
+});
+export type BuildOptions = z.infer<typeof BuildOptionsSchema>;
+
+export const BuildResultSchema = z.object({
+  imageTag: z.string(),
+  buildLog: z.string(),
+  durationMs: z.number(),
+});
+export type BuildResult = z.infer<typeof BuildResultSchema>;
+
+// ─── Job Payload Types ──────────────────────────────────────────────────────
+
+export const BuildJobPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  deploymentId: z.string().min(1),
+  sourceDir: z.string().min(1),
+  imageTag: z.string().min(1),
+  buildType: BuildTypeSchema,
+  buildCmd: z.string().nullable().optional(),
+  startCmd: z.string().nullable().optional(),
+  port: z.number().int().positive(),
+  envVars: z.record(z.string(), z.string()).optional(),
+});
+export type BuildJobPayload = z.infer<typeof BuildJobPayloadSchema>;
+
+export const DeployJobPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  deploymentId: z.string().min(1),
+  imageTag: z.string().min(1),
+  slug: z.string().min(1),
+  port: z.number().int().positive(),
+  envVars: z.record(z.string(), z.string()).optional(),
+  platformDomain: z.string().optional(),
+  domain: z.string().optional(),
+});
+export type DeployJobPayload = z.infer<typeof DeployJobPayloadSchema>;
+
+export const StopJobPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  containerId: z.string().min(1),
+});
+export type StopJobPayload = z.infer<typeof StopJobPayloadSchema>;
+
+export const RestartJobPayloadSchema = z.object({
+  projectId: z.string().min(1),
+  containerId: z.string().min(1),
+});
+export type RestartJobPayload = z.infer<typeof RestartJobPayloadSchema>;
+
 // ─── Platform Config ─────────────────────────────────────────────────────────
 
 export const PlatformConfigSchema = z.object({

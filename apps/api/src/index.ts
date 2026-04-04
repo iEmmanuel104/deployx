@@ -9,8 +9,10 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 
+import { createDb } from "@deployx/db";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
 import { authPlugin } from "./plugins/auth.js";
+import { queueProcessorPlugin } from "./queue/plugin.js";
 import { authRoutes } from "./routes/auth.js";
 import { projectRoutes } from "./routes/projects.js";
 import { deploymentRoutes } from "./routes/deployments.js";
@@ -46,6 +48,10 @@ export async function buildApp() {
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
 
+  // --- database ---
+  const db = createDb(process.env["DB_PATH"] ?? "./data/platform.db");
+  app.decorate("db", db);
+
   // --- health endpoints ---
   app.get("/healthz", async (_req, reply) => {
     return reply.send({
@@ -69,6 +75,12 @@ export async function buildApp() {
   await app.register(envVarRoutes);
   await app.register(metricRoutes);
   await app.register(systemRoutes);
+
+  // --- job queue ---
+  await app.register(queueProcessorPlugin, {
+    db,
+    pollIntervalMs: Number(process.env["QUEUE_POLL_MS"] ?? 2000),
+  });
 
   return app;
 }
