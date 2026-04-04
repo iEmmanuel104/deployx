@@ -20,16 +20,18 @@ services:
       - ALL
     cap_add:
       - NET_BIND_SERVICE
+    depends_on:
+      - docker-proxy
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-certs:/certs
       - ./infra/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./infra/traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
     networks:
       - proxy-network
+      - internal-network
 
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -69,10 +71,12 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.deployx-api.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.deployx-api.priority=100"
+      - "traefik.http.routers.deployx-api.entrypoints=websecure"
       - "traefik.http.routers.deployx-api.tls=true"
       - "traefik.http.routers.deployx-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.deployx-api.loadbalancer.server.port=3001"
-      - "traefik.http.routers.deployx-api.middlewares=security-headers@file"
+      - "traefik.http.routers.deployx-api.middlewares=security-headers@file,rate-limit@file"
 
   dashboard:
     image: deployx/dashboard:${DEPLOYX_VERSION:-latest}
@@ -86,7 +90,9 @@ services:
       - internal-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.deployx-dashboard.rule=Host(`${PLATFORM_DOMAIN:-localhost}`)"
+      - "traefik.http.routers.deployx-dashboard.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && !PathPrefix(`/api`)"
+      - "traefik.http.routers.deployx-dashboard.priority=50"
+      - "traefik.http.routers.deployx-dashboard.entrypoints=websecure"
       - "traefik.http.routers.deployx-dashboard.tls=true"
       - "traefik.http.routers.deployx-dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.deployx-dashboard.loadbalancer.server.port=3000"

@@ -178,6 +178,11 @@ JWT_SECRET=${JWT_SECRET}
 # TLS / Let's Encrypt
 ACME_EMAIL=${ACME_EMAIL:-admin@localhost}
 
+# Validate ACME email format
+if [[ ! "$ACME_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+  log_warn "ACME_EMAIL '${ACME_EMAIL}' may not be a valid email — Let's Encrypt may reject it"
+fi
+
 # Docker
 DOCKER_HOST=tcp://docker-proxy:2375
 DEPLOYX_VERSION=latest
