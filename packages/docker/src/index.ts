@@ -38,7 +38,6 @@ export interface BuildImageOpts {
   nocache?: boolean;
   memory?: number;
   cpuQuota?: number;
-  networkMode?: string;
 }
 
 export interface ContainerStats {
@@ -189,8 +188,7 @@ export interface NetworkListInfo {
 export const SECURE_CONTAINER_DEFAULTS = {
   SecurityOpt: [
     "no-new-privileges:true",
-    "seccomp:default",
-    "apparmor:docker-default",
+    "apparmor=docker-default",
   ],
   CapDrop: ["ALL"],
   CapAdd: [] as string[],
@@ -293,6 +291,7 @@ export function generateTraefikLabels(
   const labels: Record<string, string> = {
     "traefik.enable": "true",
     [`traefik.http.routers.${opts.slug}.rule`]: `Host(\`${host}\`)`,
+    [`traefik.http.routers.${opts.slug}.entrypoints`]: "websecure",
     [`traefik.http.routers.${opts.slug}.tls`]: "true",
     [`traefik.http.routers.${opts.slug}.tls.certresolver`]: "letsencrypt",
     [`traefik.http.services.${opts.slug}.loadbalancer.server.port`]:
@@ -453,9 +452,8 @@ export class DockerClient {
         labels: opts.labels,
         target: opts.target,
         nocache: opts.nocache ?? false,
-        // Build isolation (PRD Section 18.4)
-        networkmode:
-          opts.networkMode ?? SECURE_BUILD_DEFAULTS.networkMode,
+        // Build isolation (PRD Section 18.4) — networkMode: "none" is NOT overridable
+        networkmode: SECURE_BUILD_DEFAULTS.networkMode,
         memory: opts.memory ?? SECURE_BUILD_DEFAULTS.memory,
         cpuquota: opts.cpuQuota ?? SECURE_BUILD_DEFAULTS.cpuQuota,
       },

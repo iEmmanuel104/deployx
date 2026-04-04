@@ -53,7 +53,7 @@ describe("DockerClient — Build Isolation", () => {
     expect(buildOpts.cpuquota).toBe(SECURE_BUILD_DEFAULTS.cpuQuota);
   });
 
-  it("allows overriding build resource limits", async () => {
+  it("allows overriding memory and CPU but NOT networkMode", async () => {
     const context = Readable.from(Buffer.from(""));
 
     try {
@@ -61,7 +61,6 @@ describe("DockerClient — Build Isolation", () => {
         tag: "test:v1",
         memory: 2 * 1024 * 1024 * 1024,
         cpuQuota: 200_000,
-        networkMode: "host", // Override for special cases
       });
     } catch {
       // Expected
@@ -69,7 +68,8 @@ describe("DockerClient — Build Isolation", () => {
 
     const buildOpts = mockDocker.buildImage.mock.calls[0]![1];
 
-    expect(buildOpts.networkmode).toBe("host");
+    // networkMode is always "none" — non-negotiable security rule
+    expect(buildOpts.networkmode).toBe("none");
     expect(buildOpts.memory).toBe(2 * 1024 * 1024 * 1024);
     expect(buildOpts.cpuquota).toBe(200_000);
   });

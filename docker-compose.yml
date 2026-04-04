@@ -14,6 +14,8 @@ services:
   traefik:
     image: traefik:v3.2
     restart: unless-stopped
+    command:
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@localhost}"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -43,6 +45,7 @@ services:
       NETWORKS: 1
       BUILD: 1
       POST: 1
+      EVENTS: 1
       EXEC: 0
       SERVICES: 0
       SECRETS: 0
@@ -90,7 +93,7 @@ services:
       - internal-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.deployx-dashboard.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && !PathPrefix(`/api`)"
+      - "traefik.http.routers.deployx-dashboard.rule=Host(`${PLATFORM_DOMAIN:-localhost}`)"
       - "traefik.http.routers.deployx-dashboard.priority=50"
       - "traefik.http.routers.deployx-dashboard.entrypoints=websecure"
       - "traefik.http.routers.deployx-dashboard.tls=true"

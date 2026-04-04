@@ -13,6 +13,9 @@ describe("generateTraefikLabels", () => {
     expect(labels["traefik.http.routers.myapp.rule"]).toBe(
       "Host(`myapp.example.com`)",
     );
+    expect(labels["traefik.http.routers.myapp.entrypoints"]).toBe(
+      "websecure",
+    );
     expect(labels["traefik.http.routers.myapp.tls"]).toBe("true");
     expect(labels["traefik.http.routers.myapp.tls.certresolver"]).toBe(
       "letsencrypt",
