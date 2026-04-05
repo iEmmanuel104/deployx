@@ -42,7 +42,15 @@ interface Deployment {
   id: string;
   projectId: string;
   status: string;
-  version: string;
+  version: number;
+  trigger: string;
+  commitSha: string | null;
+  commitMsg: string | null;
+  imageTag: string | null;
+  buildLog: string | null;
+  errorMsg: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
   createdAt: string;
 }
 

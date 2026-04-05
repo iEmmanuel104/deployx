@@ -56,7 +56,11 @@
           {#if expandedId === deployment.id}
             <tr>
               <td colspan="4" class="bg-surface px-4 py-4">
-                <pre class="max-h-64 overflow-auto rounded-lg bg-gray-950 p-4 text-xs text-slate-300 font-mono">No build logs available for this deployment.</pre>
+                {#if deployment.buildLog}
+                  <pre class="max-h-64 overflow-auto rounded-lg bg-gray-950 p-4 text-xs text-slate-300 font-mono">{deployment.buildLog}</pre>
+                {:else}
+                  <p class="max-h-64 overflow-auto rounded-lg bg-gray-950 p-4 text-xs text-slate-300 font-mono">No build logs available for this deployment.</p>
+                {/if}
               </td>
             </tr>
           {/if}

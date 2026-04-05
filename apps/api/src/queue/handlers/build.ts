@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { deployments, projects } from "@deployx/db";
-import { buildWithNixpacks } from "@deployx/builder";
+import { buildWithNixpacks, cloneRepo, cleanupBuildDir } from "@deployx/builder";
 import { BuildJobPayloadSchema } from "@deployx/types";
 import type { DeployJobPayload } from "@deployx/types";
 import type { JobContext } from "../processor.js";
@@ -25,11 +25,26 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
     .set({ status: "building", updatedAt: now() })
     .where(eq(projects.id, payload.projectId));
 
+  // For git sources, clone the repo first to get a local directory
+  let actualSourceDir = payload.sourceDir;
+  let clonedDir: string | null = null;
+
+  if (payload.sourceDir.startsWith("http") || payload.sourceDir.startsWith("git@")) {
+    const project = (await db.select().from(projects).where(eq(projects.id, payload.projectId)).limit(1))[0];
+    const cloneResult = await cloneRepo(
+      payload.sourceDir,
+      project?.gitBranch ?? "main",
+      project?.slug ?? "build",
+    );
+    actualSourceDir = cloneResult.dir;
+    clonedDir = cloneResult.dir;
+  }
+
   try {
     logger.info({ imageTag: payload.imageTag }, "Starting Nixpacks build");
 
     const result = await buildWithNixpacks({
-      sourceDir: payload.sourceDir,
+      sourceDir: actualSourceDir,
       imageTag: payload.imageTag,
       buildType: payload.buildType,
       buildCmd: payload.buildCmd,
@@ -108,5 +123,10 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       .where(eq(projects.id, payload.projectId));
 
     throw err; // Re-throw so processor records the failure
+  } finally {
+    // Clean up cloned directory if we created one
+    if (clonedDir) {
+      await cleanupBuildDir(clonedDir);
+    }
   }
 }

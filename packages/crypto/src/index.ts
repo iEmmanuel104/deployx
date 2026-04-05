@@ -29,7 +29,7 @@ export function decrypt(ciphertext: string, iv: string, key: Buffer): string {
 }
 
 export function deriveProjectKey(masterKey: Buffer, projectId: string): Buffer {
-  return Buffer.from(hkdfSync("sha256", masterKey, "", projectId, 32));
+  return Buffer.from(hkdfSync("sha256", masterKey, "deployx-v1", projectId, 32));
 }
 
 export function parseEncryptionKey(hexKey: string): Buffer {

@@ -13,7 +13,7 @@ import {
 
 const CreateProjectBody = z.object({
   name: z.string().min(1),
-  slug: z.string().min(1).regex(/^[a-z0-9-]+$/),
+  slug: z.string().min(1).max(48).regex(/^[a-z0-9-]+$/),
   source_type: z.enum(["git", "zip", "image", "cli"]),
   git_repo: z.string().url().optional(),
   git_branch: z.string().optional(),

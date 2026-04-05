@@ -18,7 +18,7 @@ const EnvKeyParam = z.object({
 });
 
 const SetEnvBody = z.object({
-  key: z.string().min(1).regex(/^[A-Z_][A-Z0-9_]*$/i),
+  key: z.string().min(1).regex(/^[A-Z_][A-Z0-9_]*$/),
   value: z.string(),
   is_build: z.boolean().default(false),
 });

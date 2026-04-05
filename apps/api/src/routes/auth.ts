@@ -141,56 +141,64 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // ─── Refresh ───────────────────────────────────────────────────────────────
-  fastify.post("/api/v1/auth/refresh", async (request, reply) => {
-    const token = request.cookies["refresh_token"];
+  fastify.post("/api/v1/auth/refresh", {
+    config: {
+      rateLimit: {
+        max: 10,
+        timeWindow: "1 minute",
+      },
+    },
+    handler: async (request, reply) => {
+      const token = request.cookies["refresh_token"];
 
-    if (!token) {
-      const err = new Error("No refresh token provided") as Error & { statusCode: number };
-      err.statusCode = 401;
-      throw err;
-    }
+      if (!token) {
+        const err = new Error("No refresh token provided") as Error & { statusCode: number };
+        err.statusCode = 401;
+        throw err;
+      }
 
-    let payload: { sub: string; type?: string };
-    try {
-      payload = fastify.jwt.verify<{ sub: string; type?: string }>(token);
-    } catch {
-      const err = new Error("Invalid or expired refresh token") as Error & { statusCode: number };
-      err.statusCode = 401;
-      throw err;
-    }
+      let payload: { sub: string; type?: string };
+      try {
+        payload = fastify.jwt.verify<{ sub: string; type?: string }>(token);
+      } catch {
+        const err = new Error("Invalid or expired refresh token") as Error & { statusCode: number };
+        err.statusCode = 401;
+        throw err;
+      }
 
-    if (payload.type !== "refresh") {
-      const err = new Error("Invalid token type") as Error & { statusCode: number };
-      err.statusCode = 401;
-      throw err;
-    }
+      if (payload.type !== "refresh") {
+        const err = new Error("Invalid token type") as Error & { statusCode: number };
+        err.statusCode = 401;
+        throw err;
+      }
 
-    const [user] = await fastify.db
-      .select()
-      .from(users)
-      .where(eq(users.id, payload.sub))
-      .limit(1);
+      const [user] = await fastify.db
+        .select()
+        .from(users)
+        .where(eq(users.id, payload.sub))
+        .limit(1);
 
-    if (!user) {
-      const err = new Error("User not found") as Error & { statusCode: number };
-      err.statusCode = 401;
-      throw err;
-    }
+      if (!user) {
+        const err = new Error("User not found") as Error & { statusCode: number };
+        err.statusCode = 401;
+        throw err;
+      }
 
-    // Rotate tokens
-    const accessToken = fastify.jwt.sign(
-      { sub: user.id, email: user.email, role: user.role },
-      { expiresIn: "15m" },
-    );
-    const refreshToken = signRefreshToken(fastify, user.id);
+      // Rotate tokens
+      const accessToken = fastify.jwt.sign(
+        { sub: user.id, email: user.email, role: user.role },
+        { expiresIn: "15m" },
+      );
+      const refreshToken = signRefreshToken(fastify, user.id);
 
-    void reply.setCookie("refresh_token", refreshToken, COOKIE_OPTIONS);
+      void reply.setCookie("refresh_token", refreshToken, COOKIE_OPTIONS);
 
-    return reply.send(
-      success({
-        accessToken,
-      }),
-    );
+      return reply.send(
+        success({
+          accessToken,
+        }),
+      );
+    },
   });
 
   // ─── Logout ────────────────────────────────────────────────────────────────

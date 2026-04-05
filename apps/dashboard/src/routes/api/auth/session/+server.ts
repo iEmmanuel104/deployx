@@ -7,7 +7,7 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     path: "/",
     httpOnly: true,
     sameSite: "lax",
-    secure: false, // Set true in production
+    secure: process.env["NODE_ENV"] === "production",
     maxAge: 60 * 15, // 15 min (match JWT expiry)
   });
   return json({ ok: true });

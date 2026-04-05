@@ -32,7 +32,7 @@ export function createServerApiClient(
         const refreshData = await refreshRes.json();
         if (refreshData.ok) {
           cookies.set("deployx_token", refreshData.data.accessToken, {
-            path: "/", httpOnly: true, sameSite: "lax", secure: false, maxAge: 60 * 15,
+            path: "/", httpOnly: true, sameSite: "lax", secure: process.env["NODE_ENV"] === "production", maxAge: 60 * 15,
           });
           // Retry with new token
           const retryRes = await fetch(`${API_URL}${path}`, {

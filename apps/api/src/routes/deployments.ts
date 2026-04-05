@@ -150,6 +150,7 @@ export async function deploymentRoutes(
           imageTag: targetDeployment.imageTag,
           slug: project.slug,
           port: project.port ?? 3000,
+          platformDomain: process.env["PLATFORM_DOMAIN"],
         },
       });
 

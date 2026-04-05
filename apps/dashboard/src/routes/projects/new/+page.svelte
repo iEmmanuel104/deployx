@@ -45,14 +45,14 @@
       const body: Record<string, unknown> = {
         name,
         slug,
-        sourceType,
-        buildType,
+        source_type: sourceType,
+        build_type: buildType,
         port,
       };
 
       if (sourceType === "git") {
-        body.gitRepo = gitRepo;
-        body.gitBranch = gitBranch;
+        body.git_repo = gitRepo;
+        body.git_branch = gitBranch;
       }
 
       const token = getToken();

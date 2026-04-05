@@ -189,6 +189,8 @@ export const SECURE_CONTAINER_DEFAULTS = {
   SecurityOpt: [
     "no-new-privileges:true",
     "apparmor=docker-default",
+    // seccomp: Docker applies the default seccomp profile automatically.
+    // Explicitly setting it requires a file path, not "seccomp=default".
   ],
   CapDrop: ["ALL"],
   CapAdd: [] as string[],

@@ -34,7 +34,7 @@
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: "include",
-        body: JSON.stringify({ key: newKey.trim(), value: newValue, isBuild }),
+        body: JSON.stringify({ key: newKey.trim(), value: newValue, is_build: isBuild }),
       });
       const data = await res.json();
       if (data.ok) {

@@ -64,7 +64,11 @@ export async function createDeploymentAndEnqueueBuild(
   const deploymentId = ulid();
   const now = new Date().toISOString();
 
-  // Get next version number
+  // Get next version number.
+  // NOTE: The version read + insert is not wrapped in an explicit transaction,
+  // but this is safe with SQLite's single-writer model (WAL mode, busy_timeout).
+  // Only one writer can execute at a time, so the read-then-insert sequence
+  // cannot race with another concurrent insert.
   const latestDeployments = await db
     .select({ version: deployments.version })
     .from(deployments)
