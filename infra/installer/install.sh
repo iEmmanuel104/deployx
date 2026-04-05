@@ -270,18 +270,89 @@ EOF
 systemctl restart docker
 log_ok "Docker daemon configured with log rotation and build GC"
 
+# ── Install Nixpacks ─────────────────────────────────────────────────────────
+log_step "Installing Nixpacks"
+
+if command -v nixpacks &>/dev/null; then
+  NIXPACKS_VERSION=$(nixpacks --version 2>/dev/null | awk '{print $2}')
+  log_ok "Nixpacks already installed (v${NIXPACKS_VERSION})"
+else
+  log_info "Installing Nixpacks..."
+  curl -fsSL https://nixpacks.com/install.sh | bash
+  log_ok "Nixpacks installed"
+fi
+
+# ── Verify Node.js and pnpm ─────────────────────────────────────────────────
+log_step "Verifying Node.js and pnpm"
+
+if ! command -v node &>/dev/null; then
+  log_info "Installing Node.js 22 LTS..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  apt-get install -y -qq nodejs
+fi
+NODE_VER=$(node --version)
+log_ok "Node.js ${NODE_VER}"
+
+if ! command -v pnpm &>/dev/null; then
+  log_info "Installing pnpm..."
+  npm install -g pnpm@9
+fi
+log_ok "pnpm $(pnpm --version)"
+
+# ── Run database migrations ──────────────────────────────────────────────────
+log_step "Running database migrations"
+
+if [[ -f /opt/deployx/package.json ]]; then
+  cd /opt/deployx
+  pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+  pnpm db:migrate
+  log_ok "Database migrations applied"
+  cd -
+else
+  log_warn "Project files not found at /opt/deployx — skipping migrations"
+  log_warn "Run 'pnpm db:migrate' after copying project files"
+fi
+
 # ── Set ownership ─────────────────────────────────────────────────────────────
 log_step "Setting file ownership"
 
 chown -R deployx:deployx /opt/deployx
 log_ok "Ownership set for /opt/deployx"
 
-# ── PM2 setup (placeholder) ──────────────────────────────────────────────────
-log_step "PM2 process manager"
-log_warn "PM2 setup is a placeholder — configure manually if not using systemd"
-# TODO: Install PM2 globally and configure ecosystem.config.js
-# npm install -g pm2
-# pm2 startup systemd -u deployx --hp /opt/deployx
+# ── PM2 setup ────────────────────────────────────────────────────────────────
+log_step "Setting up PM2 process manager"
+
+if command -v pm2 &>/dev/null; then
+  log_ok "PM2 already installed"
+else
+  npm install -g pm2
+  log_ok "PM2 installed"
+fi
+
+cat > /opt/deployx/ecosystem.config.cjs <<'PMEOF'
+module.exports = {
+  apps: [
+    {
+      name: "deployx-api",
+      script: "/opt/deployx/apps/api/dist/index.js",
+      cwd: "/opt/deployx",
+      exec_mode: "fork",
+      instances: 1,
+      env_file: "/etc/deployx/.env",
+      max_memory_restart: "512M",
+      log_file: "/opt/deployx/logs/api.log",
+      error_file: "/opt/deployx/logs/api-error.log",
+      out_file: "/opt/deployx/logs/api-out.log",
+      merge_logs: true,
+      time: true,
+    },
+  ],
+};
+PMEOF
+
+chown deployx:deployx /opt/deployx/ecosystem.config.cjs
+pm2 startup systemd -u deployx --hp /opt/deployx 2>/dev/null || true
+log_ok "PM2 ecosystem config created (fork mode — required for SQLite)"
 
 # ── Litestream setup (placeholder) ───────────────────────────────────────────
 log_step "Litestream database replication"
@@ -298,7 +369,30 @@ log_step "Starting DeployX platform"
 if [[ -f /opt/deployx/docker-compose.yml ]]; then
   cd /opt/deployx
   docker compose up -d
-  log_ok "Platform services started"
+
+  log_info "Waiting for API to become healthy..."
+  MAX_RETRIES=30
+  RETRY_COUNT=0
+
+  while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+    if curl -sf "http://localhost:3001/healthz" > /dev/null 2>&1; then
+      log_ok "API health check passed"
+      break
+    fi
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+    sleep 2
+  done
+
+  if [[ $RETRY_COUNT -eq $MAX_RETRIES ]]; then
+    log_warn "API health check did not pass within 60 seconds"
+    log_warn "Check logs: docker compose logs api"
+  fi
+
+  if curl -sf "http://localhost:3000" > /dev/null 2>&1; then
+    log_ok "Dashboard is responding"
+  else
+    log_warn "Dashboard not yet responding — may need more time to start"
+  fi
 else
   log_warn "docker-compose.yml not found at /opt/deployx/"
   log_warn "Copy project files to /opt/deployx/ and run: docker compose up -d"
@@ -330,6 +424,7 @@ echo -e "${GREEN}║                                                            
 echo -e "${GREEN}║   Next steps:                                                ║${NC}"
 echo -e "${GREEN}║   1. Update PLATFORM_DOMAIN in /etc/deployx/.env             ║${NC}"
 echo -e "${GREEN}║   2. Point your DNS A record to this server's IP             ║${NC}"
+echo -e "${GREEN}║   2b. Add wildcard DNS: *.yourdomain.com → server IP          ║${NC}"
 echo -e "${GREEN}║   3. Set ACME_EMAIL for Let's Encrypt certificates           ║${NC}"
 echo -e "${GREEN}║   4. Restart: docker compose restart                         ║${NC}"
 echo -e "${GREEN}║                                                              ║${NC}"

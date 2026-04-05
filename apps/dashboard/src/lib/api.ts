@@ -13,35 +13,37 @@ interface Project {
   id: string;
   name: string;
   slug: string;
-  source_type: string;
-  git_repo?: string;
-  git_branch?: string;
-  build_type: string;
+  sourceType: string;
+  gitRepo?: string;
+  gitBranch?: string;
+  buildType: string;
   port?: number;
   status: string;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface Domain {
   id: string;
   domain: string;
   verified: boolean;
-  created_at: string;
+  sslStatus: string;
+  projectId: string;
+  createdAt: string;
 }
 
 interface EnvVar {
   key: string;
-  is_build: boolean;
-  created_at: string;
+  isBuild: boolean;
+  createdAt: string;
 }
 
 interface Deployment {
   id: string;
-  project_id: string;
+  projectId: string;
   status: string;
   version: string;
-  created_at: string;
+  createdAt: string;
 }
 
 interface Metrics {
@@ -50,6 +52,8 @@ interface Metrics {
   network: number[];
   timestamps: string[];
 }
+
+export type { ApiResponse, AuthTokens, Project, Domain, EnvVar, Deployment, Metrics };
 
 export function createApiClient(
   baseUrl: string,
@@ -72,6 +76,7 @@ export function createApiClient(
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
+      credentials: "include",
     });
 
     if (res.status === 401) {
@@ -104,10 +109,10 @@ export function createApiClient(
     createProject(data: {
       name: string;
       slug: string;
-      source_type: string;
-      git_repo?: string;
-      git_branch?: string;
-      build_type: string;
+      sourceType: string;
+      gitRepo?: string;
+      gitBranch?: string;
+      buildType: string;
       port?: number;
     }) {
       return request<Project>("POST", "/api/v1/projects", data);
@@ -142,8 +147,8 @@ export function createApiClient(
     getEnvVars(projectId: string) {
       return request<EnvVar[]>("GET", `/api/v1/projects/${projectId}/env`);
     },
-    setEnvVar(projectId: string, key: string, value: string, is_build = false) {
-      return request<EnvVar>("POST", `/api/v1/projects/${projectId}/env`, { key, value, is_build });
+    setEnvVar(projectId: string, key: string, value: string, isBuild = false) {
+      return request<EnvVar>("POST", `/api/v1/projects/${projectId}/env`, { key, value, isBuild });
     },
     deleteEnvVar(projectId: string, key: string) {
       return request<void>("DELETE", `/api/v1/projects/${projectId}/env/${key}`);
