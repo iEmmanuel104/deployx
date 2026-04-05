@@ -37,8 +37,8 @@ export const load: PageServerLoad = async ({ params, fetch, cookies, locals }) =
 
   return {
     project,
-    deployments: deploymentsResult.ok ? deploymentsResult.data : [],
-    domains: domainsResult.ok ? domainsResult.data : [],
-    envVars: envVarsResult.ok ? envVarsResult.data : [],
+    deployments: (deploymentsResult.ok ? deploymentsResult.data : []) as import("$lib/api.js").Deployment[],
+    domains: (domainsResult.ok ? domainsResult.data : []) as import("$lib/api.js").Domain[],
+    envVars: (envVarsResult.ok ? envVarsResult.data : []) as import("$lib/api.js").EnvVar[],
   };
 };
