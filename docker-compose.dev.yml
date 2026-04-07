@@ -1,0 +1,80 @@
+# DeployX Development Compose — builds from source
+# Usage: docker network create proxy-network && docker compose -f docker-compose.dev.yml up --build
+
+networks:
+  proxy-network:
+    external: true
+  internal-network:
+    driver: bridge
+    internal: true
+
+volumes:
+  deployx-data: {}
+  deployx-builds: {}
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: always
+    tmpfs:
+      - /tmp
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      BUILD: 1
+      POST: 1
+      EVENTS: 1
+      EXEC: 0
+      SERVICES: 0
+      SECRETS: 0
+      CONFIGS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal-network
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - deployx-data:/data
+      - deployx-builds:/builds
+    environment:
+      - PLATFORM_DOMAIN=${PLATFORM_DOMAIN:-localhost}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_PATH=/data/platform.db
+      - PORT=3001
+      - NODE_ENV=production
+      - DEPLOYX_BUILDS_DIR=/builds
+    depends_on:
+      - docker-proxy
+    networks:
+      - proxy-network
+      - internal-network
+    ports:
+      - "3001:3001"
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - API_URL=http://api:3001
+      - PUBLIC_API_URL=http://localhost:3001
+    depends_on:
+      - api
+    networks:
+      - proxy-network
+      - internal-network
+    ports:
+      - "3000:3000"

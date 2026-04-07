@@ -10,6 +10,7 @@ import {
 } from "fastify-type-provider-zod";
 
 import { createDb } from "@deployx/db";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
 import { authPlugin } from "./plugins/auth.js";
 import { queueProcessorPlugin } from "./queue/plugin.js";
@@ -51,6 +52,31 @@ export async function buildApp() {
   // --- database ---
   const db = createDb(process.env["DB_PATH"] ?? "./data/platform.db");
   app.decorate("db", db);
+
+  // Auto-run migrations on startup
+  try {
+    const possiblePaths = [
+      new URL("../../packages/db/drizzle", import.meta.url).pathname,
+      "/app/packages/db/drizzle",  // Docker container path
+      "./packages/db/drizzle",     // Relative from CWD
+    ];
+    let migrated = false;
+    for (const migrationsPath of possiblePaths) {
+      try {
+        migrate(db, { migrationsFolder: migrationsPath });
+        app.log.info({ path: migrationsPath }, "Database migrations applied");
+        migrated = true;
+        break;
+      } catch {
+        continue;
+      }
+    }
+    if (!migrated) {
+      app.log.warn("Could not find migrations folder — tables may need manual creation");
+    }
+  } catch (err) {
+    app.log.warn({ err }, "Migration warning");
+  }
 
   // --- health endpoints ---
   app.get("/healthz", async (_req, reply) => {
