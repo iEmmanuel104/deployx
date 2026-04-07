@@ -39,7 +39,28 @@ This single command:
 5. Starts all services via Docker Compose
 6. Verifies health and prints the dashboard URL
 
-**Supported operating systems:** Ubuntu 22.04/24.04, Debian 12
+**Supported operating systems:** Ubuntu 22.04, Ubuntu 24.04, Debian 12
+
+For non-interactive installation (CI/CD or scripted setup):
+
+```bash
+PLATFORM_DOMAIN=deployx.example.com ACME_EMAIL=you@email.com \
+  curl -fsSL https://raw.githubusercontent.com/iEmmanuel104/deployx/main/infra/installer/install.sh | sudo bash
+```
+
+### System Requirements
+
+| Resource | Minimum | Recommended |
+|----------|---------|-------------|
+| **OS** | Ubuntu 22.04 / 24.04, Debian 12 | Ubuntu 24.04 |
+| **CPU** | 1 vCPU | 2+ vCPU |
+| **RAM** | 1 GB | 2+ GB |
+| **Storage** | 20 GB | 40+ GB (Docker images take space) |
+| **Network** | Public IPv4 | Public IPv4 + domain with DNS access |
+
+**Not supported for production:** Windows, macOS, CentOS, Fedora, Arch, Alpine.
+
+**Local development** (any OS): Use Docker Desktop with `docker-compose.dev.yml` -- works on Windows, macOS, and Linux.
 
 ---
 
