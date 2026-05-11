@@ -7,9 +7,9 @@
 
   let { children, data }: { children: Snippet; data: LayoutData } = $props();
 
-  // Sync server user data to client auth state
+  // Sync server user data + token to client auth state
   $effect(() => {
-    setInitialAuth(data.user);
+    setInitialAuth(data.user, data.accessToken ?? null);
   });
 
   let currentUser = $derived(getUser());

@@ -13,8 +13,15 @@ export function getUser() {
   return user;
 }
 
-export function setInitialAuth(initialUser: { id: string; email: string; name: string; role: string } | null) {
+export function setInitialAuth(
+  initialUser: { id: string; email: string; name: string; role: string } | null,
+  initialToken: string | null = null,
+) {
   user = initialUser;
+  // Rehydrate the token on page reload from layout.server.ts. Without this,
+  // every client-side fetch after a hard reload gets 401 because the in-memory
+  // $state is fresh while the auth cookie still grants the user access.
+  if (initialToken) accessToken = initialToken;
 }
 
 export async function login(email: string, password: string) {
