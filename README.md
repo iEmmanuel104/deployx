@@ -327,18 +327,19 @@ DeployX is MVP-stage. The following items are tracked and being addressed:
 
 | Status | Item | Notes |
 |---|---|---|
-| 🚧 | **Log streaming** | Both the CLI (`deployx logs`) and the dashboard logs view are placeholders. API endpoint exists but doesn't stream Docker logs yet. |
-| 🚧 | **`/readyz` DB validation** | Endpoint exists but always returns `ok` without actually probing the SQLite DB. Currently a placeholder. |
-| 🚧 | **Build garbage collection** | `/builds/` grows unbounded. There is no automatic GC of old build artifacts. Manual prune required. |
-| 🚧 | **Litestream / S3 backup** | The installer has a TODO placeholder for setting up Litestream to replicate `platform.db` to S3/R2. Until implemented, `platform.db` has no offsite backup. |
-| 🚧 | **API `.env` auto-loading in dev** | `apps/api/src/index.ts` reads `process.env` directly without `dotenv`. Local dev requires shell-exported env vars. Production (via the installer) is unaffected — `/etc/deployx/.env` is sourced by systemd. |
+| ✅ | **Log streaming** | `GET /api/v1/projects/:id/logs?follow=1&tail=200` streams demuxed Docker container logs as Server-Sent Events (with 15s heartbeats). CLI: `deployx logs <project> -f`. Dashboard: live Logs tab on each project. |
+| ✅ | **`/readyz` DB validation** | `/readyz` runs `PRAGMA quick_check(1)` against the platform DB and returns 503 with the failure detail when the probe fails. |
+| ✅ | **Build garbage collection** | `POST /api/v1/system/gc?keep=N&dryRun=1` plus `deployx builds gc` CLI walk `/builds/`, group by project slug, keep the N most recent per slug, remove the rest. Reports scanned/kept/removed/bytes-freed. |
+| ✅ | **Litestream / S3 backup** | Installer downloads Litestream and writes `/etc/litestream.yml` template targeting any S3-compatible bucket (R2, B2, AWS S3, MinIO). Restore procedure documented above under Troubleshooting. |
+| ✅ | **API `.env` auto-loading in dev** | `apps/api/src/index.ts` imports `dotenv/config` at the top — `pnpm dev` reads `.env` directly. Production (systemd-sourced `/etc/deployx/.env`) unaffected. |
 | 🚧 | **Webhook triggers** | `DeploymentTrigger.git_push` exists in the schema but no webhook receiver is wired up. Use the CLI or dashboard "Deploy" button for now. |
 | 🚧 | **Custom Dockerfile builds** | Schema supports `buildType=dockerfile` but the builder currently only handles Nixpacks. |
 | ✅ | Nixpacks builds | Working — auto-detects Python, Node, Go, Rust, Ruby. |
 | ✅ | Traefik + Let's Encrypt | Working — automatic cert issuance and renewal. |
 | ✅ | Auth (register/login/JWT) | Working. |
 | ✅ | Project / deployment CRUD via API | Working. |
-| ✅ | Dashboard (login, projects list, project detail) | Working. |
+| ✅ | Dashboard (login, projects list, project detail with Logs tab) | Working. |
+| ✅ | CLI (login + builds gc + logs + env + domains + projects) | Real implementations — `login` persists creds to ~/.config/deployx. |
 
 ---
 
