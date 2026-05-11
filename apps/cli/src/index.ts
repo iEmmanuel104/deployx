@@ -7,6 +7,7 @@ import { registerLogsCommand } from "./commands/logs.js";
 import { registerEnvCommand } from "./commands/env.js";
 import { registerDomainsCommand } from "./commands/domains.js";
 import { registerRollbackCommand } from "./commands/rollback.js";
+import { registerBuildsCommand } from "./commands/builds.js";
 
 const program = new Command();
 
@@ -24,5 +25,6 @@ registerLogsCommand(program);
 registerEnvCommand(program);
 registerDomainsCommand(program);
 registerRollbackCommand(program);
+registerBuildsCommand(program);
 
 program.parse(process.argv);

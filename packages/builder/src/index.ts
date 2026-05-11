@@ -16,3 +16,8 @@ export {
   NixpacksBuildError,
   GitCloneError,
 } from "./errors.js";
+export {
+  gcBuilds,
+  type GcOptions,
+  type GcResult,
+} from "./gc.js";
