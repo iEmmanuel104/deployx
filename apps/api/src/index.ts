@@ -1,3 +1,7 @@
+// Load .env in dev. In production the systemd unit sources /etc/deployx/.env
+// before launching node, so this is a no-op when env vars are already set.
+import "dotenv/config";
+
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
@@ -9,7 +13,7 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 
-import { createDb } from "@deployx/db";
+import { createDb, probeDb } from "@deployx/db";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { errorHandlerPlugin } from "./plugins/error-handler.js";
 import { authPlugin } from "./plugins/auth.js";
@@ -89,8 +93,12 @@ export async function buildApp() {
   });
 
   app.get("/readyz", async (_req, reply) => {
-    // TODO: check DB connection, etc.
-    return reply.send({ status: "ok" });
+    const probe = probeDb(db);
+    if (!probe.ok) {
+      app.log.error({ detail: probe.detail }, "/readyz DB probe failed");
+      return reply.status(503).send({ status: "db_unreachable", detail: probe.detail });
+    }
+    return reply.send({ status: "ok", db: "ok" });
   });
 
   // --- routes ---

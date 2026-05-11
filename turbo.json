@@ -7,7 +7,20 @@
     },
     "dev": {
       "persistent": true,
-      "cache": false
+      "cache": false,
+      "passThroughEnv": [
+        "DB_PATH",
+        "JWT_SECRET",
+        "ENCRYPTION_KEY",
+        "PLATFORM_DOMAIN",
+        "ACME_EMAIL",
+        "PORT",
+        "NODE_ENV",
+        "LOG_LEVEL",
+        "QUEUE_POLL_MS",
+        "API_URL",
+        "DEPLOYX_VERSION"
+      ]
     },
     "lint": {
       "dependsOn": ["^build"]

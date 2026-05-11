@@ -1,2 +1,2 @@
 export * from "./schema.js";
-export { createDb, type DeployxDb } from "./client.js";
+export { createDb, probeDb, type DeployxDb } from "./client.js";

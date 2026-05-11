@@ -19,3 +19,28 @@ export function createDb(dbPath: string) {
 }
 
 export type DeployxDb = ReturnType<typeof createDb>;
+
+/**
+ * Probe the SQLite database to verify it is readable + structurally sound.
+ * Runs PRAGMA quick_check(1) — a cheap consistency check used for /readyz.
+ *
+ * Returns { ok: true } when healthy, { ok: false, detail: ... } otherwise.
+ * Never throws; callers can return its result directly as JSON.
+ */
+export function probeDb(db: DeployxDb): { ok: true } | { ok: false; detail: unknown } {
+  try {
+    // Drizzle's better-sqlite3 driver exposes the underlying handle as $client.
+    const sqlite = (db as unknown as { $client: Database.Database }).$client;
+    const result = sqlite.pragma("quick_check(1)") as Array<{ quick_check?: string }>;
+    const ok =
+      Array.isArray(result) &&
+      result.length === 1 &&
+      result[0]?.quick_check === "ok";
+    return ok ? { ok: true } : { ok: false, detail: result };
+  } catch (err) {
+    return {
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
