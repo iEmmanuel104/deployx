@@ -3,6 +3,7 @@ import { z } from "zod";
 import { eq, and, isNull, desc } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { projects, deployments } from "@deployx/db";
+import { DockerClient } from "@deployx/docker";
 import { requireAuth } from "../plugins/auth.js";
 import { success } from "../utils/response.js";
 import { getOwnedProject } from "../utils/ownership.js";
@@ -309,6 +310,96 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       });
 
       return reply.status(202).send(success({ deploymentId, jobId }));
+    },
+  });
+
+  // Stream container logs as Server-Sent Events.
+  //
+  // GET /api/v1/projects/:id/logs?follow=1&tail=200
+  //   - follow=1 keeps the connection open and pushes new lines as they arrive
+  //   - follow=0 (default) returns the last `tail` lines and closes
+  //
+  // Each line is sent as a separate SSE frame: `data: <log line>\n\n`.
+  // A heartbeat comment is sent every 15s when follow=1 to keep proxies
+  // from killing the idle connection.
+  fastify.get("/api/v1/projects/:id/logs", {
+    schema: {
+      params: IdParam,
+      querystring: z.object({
+        follow: z.string().optional(),
+        tail: z.string().optional(),
+        timestamps: z.string().optional(),
+      }),
+    },
+    onRequest: requireAuth,
+    handler: async (request, reply) => {
+      const { id } = request.params as z.infer<typeof IdParam>;
+      const q = request.query as {
+        follow?: string;
+        tail?: string;
+        timestamps?: string;
+      };
+      const follow = q.follow === "1" || q.follow === "true";
+      const tail = q.tail ? Math.max(1, Math.min(10000, Number(q.tail))) : 200;
+      const timestamps = q.timestamps === "1" || q.timestamps === "true";
+
+      const project = await getOwnedProject(fastify.db, request.user.sub, id);
+      if (!project.containerId) {
+        return reply.status(409).send({
+          ok: false,
+          error: {
+            code: "NO_CONTAINER",
+            message: "Project has no running container yet — deploy it first",
+          },
+        });
+      }
+
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+
+      // Heartbeat to keep idle connections alive (every 15s when following)
+      const heartbeat = follow
+        ? setInterval(() => {
+            reply.raw.write(": ping\n\n");
+          }, 15000)
+        : null;
+
+      let closed = false;
+      const onClose = () => {
+        closed = true;
+        if (heartbeat) clearInterval(heartbeat);
+      };
+      request.raw.on("close", onClose);
+
+      try {
+        const docker = new DockerClient();
+        for await (const line of docker.streamContainerLogLines(
+          project.containerId,
+          { follow, tail, timestamps },
+        )) {
+          if (closed) break;
+          // Replace any embedded newlines (shouldn't happen, but be safe) and
+          // emit one SSE data: frame per log line.
+          reply.raw.write(`data: ${line.replace(/\r?\n/g, " ")}\n\n`);
+        }
+      } catch (err) {
+        request.log.error({ err }, "log stream error");
+        if (!closed) {
+          reply.raw.write(
+            `event: error\ndata: ${JSON.stringify({
+              message: err instanceof Error ? err.message : String(err),
+            })}\n\n`,
+          );
+        }
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+        request.raw.off("close", onClose);
+        if (!closed) reply.raw.end();
+      }
     },
   });
 }

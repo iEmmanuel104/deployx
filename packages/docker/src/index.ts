@@ -615,6 +615,77 @@ export class DockerClient {
   }
 
   /**
+   * Streams container logs as demuxed line-delimited strings.
+   *
+   * Docker's log API returns a multiplexed binary stream when the container
+   * has no TTY: each frame is [stream_type(1)][pad(3)][size(4 BE)][payload(size)].
+   * This generator demuxes both stdout and stderr into the SAME line sequence,
+   * appropriate for surfacing into a single UI/log feed.
+   *
+   * On a follow:true stream, the generator yields lines until the caller stops
+   * iterating (which closes the underlying stream via `destroy()`).
+   */
+  async *streamContainerLogLines(
+    containerId: string,
+    opts: { follow?: boolean; tail?: number; timestamps?: boolean } = {},
+  ): AsyncGenerator<string, void, void> {
+    const container = this.docker.getContainer(containerId);
+    const inspect = await container.inspect();
+    const hasTty = inspect.Config.Tty === true;
+
+    const baseOpts = {
+      stdout: true,
+      stderr: true,
+      tail: opts.tail ?? 100,
+      timestamps: opts.timestamps ?? false,
+    } as const;
+
+    if (!opts.follow) {
+      // dockerode types: follow:false overload returns Buffer
+      const buf = (await container.logs({ ...baseOpts, follow: false })) as Buffer;
+      for (const line of splitLines(demuxBuffer(buf, hasTty))) yield line;
+      return;
+    }
+
+    // dockerode types: follow:true overload returns a ReadableStream
+    const stream = (await container.logs({
+      ...baseOpts,
+      follow: true,
+    })) as unknown as NodeJS.ReadableStream;
+
+    // Streaming case: read chunks, demux, yield lines.
+    let pending: Buffer = Buffer.alloc(0);
+    let lineBuf = "";
+    try {
+      for await (const chunkRaw of stream as AsyncIterable<Buffer | Uint8Array>) {
+        const chunk = Buffer.isBuffer(chunkRaw)
+          ? chunkRaw
+          : Buffer.from(chunkRaw.buffer, chunkRaw.byteOffset, chunkRaw.byteLength);
+        pending = Buffer.concat([pending, chunk]);
+        const { decoded, rest } = drainFrames(pending, hasTty);
+        pending = rest;
+        lineBuf += decoded;
+        let nl: number;
+        while ((nl = lineBuf.indexOf("\n")) >= 0) {
+          yield lineBuf.slice(0, nl);
+          lineBuf = lineBuf.slice(nl + 1);
+        }
+      }
+      if (lineBuf.length > 0) yield lineBuf;
+    } finally {
+      // Best-effort close
+      const maybeDestroy = (stream as { destroy?: () => void }).destroy;
+      if (typeof maybeDestroy === "function") {
+        try {
+          maybeDestroy.call(stream);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+
+  /**
    * Gets a stream of Docker engine events, optionally filtered.
    */
   async getEvents(
@@ -1099,3 +1170,52 @@ function mapNetworkListInfo(raw: any): NetworkListInfo {
 }
 
 /* eslint-enable @typescript-eslint/no-explicit-any */
+
+// ─── Docker log frame demux helpers ─────────────────────────────────────────
+//
+// When a container has no TTY, the engine sends logs as a sequence of 8-byte
+// headers followed by payloads:
+//   [stream_type(1)][0,0,0][size(4 BE uint32)][payload(size)]
+// stream_type: 0=stdin, 1=stdout, 2=stderr.
+// When TTY is true, the stream is raw text — no demux needed.
+
+function demuxBuffer(buf: Buffer, hasTty: boolean): string {
+  if (hasTty) return buf.toString("utf8");
+  let out = "";
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const size = buf.readUInt32BE(i + 4);
+    const payloadStart = i + 8;
+    const payloadEnd = payloadStart + size;
+    if (payloadEnd > buf.length) break;
+    out += buf.subarray(payloadStart, payloadEnd).toString("utf8");
+    i = payloadEnd;
+  }
+  return out;
+}
+
+function drainFrames(
+  pending: Buffer,
+  hasTty: boolean,
+): { decoded: string; rest: Buffer } {
+  if (hasTty) return { decoded: pending.toString("utf8"), rest: Buffer.alloc(0) };
+  let out = "";
+  let i = 0;
+  while (i + 8 <= pending.length) {
+    const size = pending.readUInt32BE(i + 4);
+    const payloadStart = i + 8;
+    const payloadEnd = payloadStart + size;
+    if (payloadEnd > pending.length) break;
+    out += pending.subarray(payloadStart, payloadEnd).toString("utf8");
+    i = payloadEnd;
+  }
+  return { decoded: out, rest: pending.subarray(i) };
+}
+
+function splitLines(text: string): string[] {
+  // Final trailing newline is intentionally dropped — that's just a frame
+  // boundary, not a real "empty log line".
+  const lines = text.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}

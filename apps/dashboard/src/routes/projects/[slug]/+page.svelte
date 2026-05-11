@@ -3,6 +3,7 @@
   import DeploymentsTab from "$lib/components/project/DeploymentsTab.svelte";
   import DomainsTab from "$lib/components/project/DomainsTab.svelte";
   import EnvVarsTab from "$lib/components/project/EnvVarsTab.svelte";
+  import LogsTab from "$lib/components/project/LogsTab.svelte";
   import SettingsTab from "$lib/components/project/SettingsTab.svelte";
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import type { PageData } from "./$types";
@@ -13,6 +14,7 @@
   const tabs = [
     { id: "overview", label: "Overview" },
     { id: "deployments", label: "Deployments" },
+    { id: "logs", label: "Logs" },
     { id: "domains", label: "Domains" },
     { id: "environment", label: "Environment" },
     { id: "settings", label: "Settings" },
@@ -57,6 +59,8 @@
       <OverviewTab project={data.project} deployments={data.deployments} />
     {:else if activeTab === "deployments"}
       <DeploymentsTab deployments={data.deployments} projectId={data.project.id} />
+    {:else if activeTab === "logs"}
+      <LogsTab projectId={data.project.id} />
     {:else if activeTab === "domains"}
       <DomainsTab domains={data.domains} projectId={data.project.id} />
     {:else if activeTab === "environment"}
