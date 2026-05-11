@@ -267,6 +267,35 @@ PM2 must run DeployX API in `fork` mode, never `cluster` mode.
 - Nixpacks needs network access during build. The build container runs with `NetworkMode: none` for security — DeployX pre-fetches packages, but custom Dockerfiles bypass this. Check `docker compose logs api | grep nixpacks`.
 - Disk full. Builds accumulate in `/builds/` and DeployX does not yet garbage-collect them (see Roadmap). Manually prune: `rm -rf /builds/old-*`.
 
+### Restore the platform DB from a Litestream backup
+
+If the VPS is lost or `platform.db` is corrupt and you've been replicating via
+Litestream, restore is a single command. From a fresh DeployX install (with
+`/etc/litestream.yml` already filled in):
+
+```bash
+# Stop the platform so nothing writes during the restore
+cd /opt/deployx && docker compose down
+
+# Pull the most recent replicated state into a side file, then swap it in
+litestream restore -o /data/platform.db.restored -if-replica-exists -config /etc/litestream.yml /data/platform.db
+mv /data/platform.db /data/platform.db.old
+mv /data/platform.db.restored /data/platform.db
+
+# Quick sanity check
+sqlite3 /data/platform.db "SELECT COUNT(*) FROM users;"
+
+# Bring it back up — Litestream will resume replication
+docker compose up -d
+systemctl restart litestream
+```
+
+For a brand new VPS that never had Litestream running locally yet, run the
+installer first, fill in `/etc/litestream.yml` with the original bucket
+credentials, then run the restore above instead of the empty `migrate`
+seed. The DB schema comes along for free since Litestream replicates the
+file as-is.
+
 ### "Slug already taken" when creating a project
 
 The slug must be globally unique across all users on a single DeployX instance. Pick a different slug or delete the conflicting project.

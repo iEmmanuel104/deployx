@@ -411,14 +411,73 @@ chown deployx:deployx /opt/deployx/ecosystem.config.cjs
 pm2 startup systemd -u deployx --hp /opt/deployx 2>/dev/null || true
 log_ok "PM2 ecosystem config created (fork mode — required for SQLite)"
 
-# ── Litestream setup (placeholder) ───────────────────────────────────────────
+# ── Litestream setup ─────────────────────────────────────────────────────────
 log_step "Litestream database replication"
-log_warn "Litestream setup is a placeholder — configure for S3 backups"
-# TODO: Install Litestream, create /etc/litestream.yml
-# wget https://github.com/benbjohnson/litestream/releases/download/v0.3.13/litestream-v0.3.13-linux-amd64.deb
-# dpkg -i litestream-v0.3.13-linux-amd64.deb
-# systemctl enable litestream
-# systemctl start litestream
+
+LITESTREAM_VERSION="0.3.13"
+LITESTREAM_DEB="litestream-v${LITESTREAM_VERSION}-linux-amd64.deb"
+
+if command -v litestream &>/dev/null; then
+  log_ok "Litestream already installed ($(litestream version 2>&1 | head -1))"
+else
+  log_info "Installing Litestream v${LITESTREAM_VERSION}"
+  TMP_DEB="/tmp/${LITESTREAM_DEB}"
+  if curl -fsSL -o "$TMP_DEB" \
+    "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/${LITESTREAM_DEB}"; then
+    dpkg -i "$TMP_DEB" >/dev/null 2>&1 || apt-get install -f -y >/dev/null
+    rm -f "$TMP_DEB"
+    log_ok "Litestream installed"
+  else
+    log_warn "Could not download Litestream — skipping backup setup"
+    log_warn "Install manually: https://litestream.io/install/"
+  fi
+fi
+
+# Write the litestream config in disabled/template form. The platform DB path
+# is real but the replica target intentionally has placeholder credentials so
+# the daemon refuses to start until the operator fills them in. This keeps
+# fresh installs from silently shipping data nowhere.
+if [[ -f /etc/litestream.yml ]]; then
+  log_ok "Litestream config already exists at /etc/litestream.yml"
+else
+  cat > /etc/litestream.yml <<'LSEOF'
+# DeployX SQLite replication — fill in your S3-compatible backup target
+# before enabling the systemd service.
+#
+# Tested backends: Cloudflare R2, Backblaze B2, AWS S3, MinIO.
+# Restore:  litestream restore -o /data/platform.db.restored s3://BUCKET/platform.db
+# Verify:   sqlite3 /data/platform.db.restored "select count(*) from users"
+
+dbs:
+  - path: /data/platform.db
+    replicas:
+      - type: s3
+        endpoint: REPLACE_WITH_S3_ENDPOINT   # e.g. https://<account>.r2.cloudflarestorage.com
+        bucket: REPLACE_WITH_BUCKET_NAME
+        path: platform.db
+        region: auto                          # R2 uses "auto"; AWS S3 uses e.g. "us-east-1"
+        access-key-id: REPLACE_WITH_ACCESS_KEY
+        secret-access-key: REPLACE_WITH_SECRET_KEY
+        retention: 168h                       # 7 days of WAL retention
+        snapshot-interval: 24h
+        validation-interval: 12h
+LSEOF
+  chmod 0600 /etc/litestream.yml
+  log_ok "Litestream config template written to /etc/litestream.yml (chmod 0600)"
+fi
+
+if command -v litestream &>/dev/null; then
+  # Don't auto-enable: the placeholder config will fail. Surface the next step.
+  if grep -q "REPLACE_WITH_" /etc/litestream.yml; then
+    log_warn "Litestream is installed but NOT yet enabled."
+    log_warn "Edit /etc/litestream.yml with your S3-compatible bucket details, then:"
+    log_warn "  systemctl enable --now litestream"
+  else
+    systemctl enable --now litestream 2>/dev/null || \
+      log_warn "Could not enable litestream service automatically — run 'systemctl enable --now litestream'"
+    log_ok "Litestream service enabled"
+  fi
+fi
 
 # ── Build Docker images ──────────────────────────────────────────────────────
 log_step "Building Docker images (this may take 5-10 minutes)"
