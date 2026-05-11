@@ -22,6 +22,21 @@ DeployX is a self-hosted alternative to Railway, Render, and Coolify. It lets yo
 
 ---
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Login](docs/screenshots/01-dashboard-login.png) | ![Register](docs/screenshots/02-dashboard-register.png) |
+| Sign-in screen | Account creation |
+| ![Empty projects](docs/screenshots/03-dashboard-projects-empty.png) | ![New project](docs/screenshots/04-dashboard-project-new.png) |
+| Projects list (empty state) | New-project form |
+| ![Project filled](docs/screenshots/05-dashboard-project-new-filled.png) | ![Settings](docs/screenshots/07-dashboard-settings.png) |
+| New-project form (filled) | Settings |
+
+> Dashboard built with SvelteKit (Svelte 5 runes), Tailwind, dark surface palette. All screenshots from local dev mode.
+
+---
+
 ## Quick Start (VPS)
 
 Deploy DeployX on a fresh VPS with a single command:
@@ -83,6 +98,48 @@ docker compose -f docker-compose.dev.yml up --build
 # Dashboard: http://localhost:3000
 # API: http://localhost:3001
 ```
+
+> **Dev mode note:** the API does not currently auto-load `.env` (no `dotenv` import in `apps/api/src/index.ts`). For `pnpm dev` you'll need to either `export` the variables in your shell, run packages individually (`pnpm -F @deployx/api dev` with env prefixed), or wait on the upcoming env-loader fix tracked in the roadmap below.
+
+---
+
+## Deploy Your First App
+
+After DeployX is running on your VPS, deploy your first project from the CLI:
+
+```bash
+# 1. Install the CLI (one-time)
+npm install -g @deployx/cli
+
+# 2. Authenticate against your DeployX instance
+deployx login --server https://deployx.example.com
+# Prompts for email + password (the admin you created during install)
+
+# 3. Create a project from a git repo
+deployx projects create \
+  --name "hello-world" \
+  --slug "hello-world" \
+  --git "https://github.com/heroku/python-getting-started.git" \
+  --branch "main" \
+  --build "nixpacks" \
+  --port 5000
+
+# 4. Set environment variables
+deployx env set DATABASE_URL "postgres://..."
+deployx env set SECRET_KEY "$(openssl rand -hex 32)"
+
+# 5. Trigger the first deploy
+deployx deploy
+
+# 6. Attach a custom domain (optional — the default subdomain
+#    <slug>.your-platform-domain is created automatically)
+deployx domains add hello-world.example.com
+
+# 7. Verify
+curl -I https://hello-world.your-platform-domain
+```
+
+You can do all of the above from the web dashboard at `https://${PLATFORM_DOMAIN}` instead. The CLI is mostly useful for scripting and CI.
 
 ---
 
@@ -174,6 +231,85 @@ DeployX is built with a security-first approach. These measures are enforced at 
 | Containers | Docker + Traefik v3 |
 | Builds | Nixpacks |
 | Monorepo | Turborepo + pnpm |
+
+---
+
+## Troubleshooting
+
+### Cert won't issue (Caddy/Traefik shows "challenge failed")
+
+- DNS not pointing at this VPS yet. Verify with `dig +short ${PLATFORM_DOMAIN} @1.1.1.1` — must return your VPS IP.
+- Port 80 is blocked. Let's Encrypt's HTTP-01 challenge requires inbound port 80. Check: `ufw status` and your provider's firewall rules.
+- Rate-limited. Let's Encrypt allows 5 duplicate certs per week per domain. Watch for "too many certificates" in Traefik logs and back off.
+
+### Dashboard returns `502 Bad Gateway`
+
+- API container isn't running. `docker compose ps` should show `deployx-api` as `Up`. If not, `docker compose logs api` to see why.
+- API crashed mid-startup — usually missing env var or DB path. Check `/etc/deployx/.env` exists and is readable by the deployx user.
+
+### `Database is locked` errors
+
+DeployX uses SQLite in WAL mode. If you accidentally ran `pnpm` with PM2 cluster mode (or any setup with multiple writer processes), the WAL file can get corrupted. Fix:
+
+```bash
+# Stop everything
+docker compose down
+# Force checkpoint + remove WAL
+sqlite3 /data/platform.db "PRAGMA wal_checkpoint(TRUNCATE);"
+rm -f /data/platform.db-shm /data/platform.db-wal
+docker compose up -d
+```
+
+PM2 must run DeployX API in `fork` mode, never `cluster` mode.
+
+### Build hangs or fails mid-way
+
+- Nixpacks needs network access during build. The build container runs with `NetworkMode: none` for security — DeployX pre-fetches packages, but custom Dockerfiles bypass this. Check `docker compose logs api | grep nixpacks`.
+- Disk full. Builds accumulate in `/builds/` and DeployX does not yet garbage-collect them (see Roadmap). Manually prune: `rm -rf /builds/old-*`.
+
+### "Slug already taken" when creating a project
+
+The slug must be globally unique across all users on a single DeployX instance. Pick a different slug or delete the conflicting project.
+
+### Dashboard signup says "Failed to fetch"
+
+If you're running `pnpm dev` locally:
+
+- The API isn't reachable from the dashboard (most often: API not running, wrong port, or the Vite proxy is misconfigured).
+- The `/api/v1` proxy in `apps/dashboard/vite.config.ts` must NOT swallow `/api/auth/*` (those are SvelteKit-local routes for session cookies). Confirm the proxy key is `/api/v1`, not `/api`.
+
+---
+
+## Coexistence with Another Reverse Proxy
+
+**DeployX takes ports 80 and 443.** Traefik v3 binds both for HTTP→HTTPS redirect and Let's Encrypt's HTTP-01 challenge. If your VPS already runs Caddy, nginx, Apache, or another DeployX instance on those ports, you have three options:
+
+1. **Stop the existing proxy** and migrate its sites into DeployX as projects. Cleanest end-state, requires care during cutover.
+2. **Move DeployX to a second VPS.** Recommended when the existing reverse proxy hosts production traffic you don't want to disrupt. DeployX is light enough that a $5–6/month VPS handles dozens of small apps.
+3. **Front DeployX with the existing proxy.** Configure your existing proxy to terminate TLS and reverse-proxy to DeployX on alternative ports. Loses DeployX's built-in cert management; only choose this when option 1 or 2 is impossible.
+
+> **Case study:** the SwiftEagle deployment (`swifteagledelivery.info`) runs on its own Caddy on Contabo VPS #1. DeployX runs (will run) on Contabo VPS #2 with `deploy.synquanta.com`. Separate VPSes, zero conflict.
+
+---
+
+## Roadmap / Known Limitations
+
+DeployX is MVP-stage. The following items are tracked and being addressed:
+
+| Status | Item | Notes |
+|---|---|---|
+| 🚧 | **Log streaming** | Both the CLI (`deployx logs`) and the dashboard logs view are placeholders. API endpoint exists but doesn't stream Docker logs yet. |
+| 🚧 | **`/readyz` DB validation** | Endpoint exists but always returns `ok` without actually probing the SQLite DB. Currently a placeholder. |
+| 🚧 | **Build garbage collection** | `/builds/` grows unbounded. There is no automatic GC of old build artifacts. Manual prune required. |
+| 🚧 | **Litestream / S3 backup** | The installer has a TODO placeholder for setting up Litestream to replicate `platform.db` to S3/R2. Until implemented, `platform.db` has no offsite backup. |
+| 🚧 | **API `.env` auto-loading in dev** | `apps/api/src/index.ts` reads `process.env` directly without `dotenv`. Local dev requires shell-exported env vars. Production (via the installer) is unaffected — `/etc/deployx/.env` is sourced by systemd. |
+| 🚧 | **Webhook triggers** | `DeploymentTrigger.git_push` exists in the schema but no webhook receiver is wired up. Use the CLI or dashboard "Deploy" button for now. |
+| 🚧 | **Custom Dockerfile builds** | Schema supports `buildType=dockerfile` but the builder currently only handles Nixpacks. |
+| ✅ | Nixpacks builds | Working — auto-detects Python, Node, Go, Rust, Ruby. |
+| ✅ | Traefik + Let's Encrypt | Working — automatic cert issuance and renewal. |
+| ✅ | Auth (register/login/JWT) | Working. |
+| ✅ | Project / deployment CRUD via API | Working. |
+| ✅ | Dashboard (login, projects list, project detail) | Working. |
 
 ---
 
