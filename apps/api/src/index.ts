@@ -46,7 +46,28 @@ export async function buildApp() {
   await app.register(jwt, {
     secret: process.env["JWT_SECRET"] ?? "change-me-in-production",
   });
-  await app.register(rateLimit, { max: 100, timeWindow: "1 minute" });
+  // Rate limit is per-IP by default. When DeployX runs behind Traefik all
+  // requests appear to come from the proxy IP, so a low global cap (100/min)
+  // breaks even single-user usage. We honor X-Forwarded-For and use a
+  // generous default. Setting RATE_LIMIT_DISABLED=1 turns it off entirely —
+  // useful for local dev and CI runs hitting auth endpoints repeatedly.
+  // Override via RATE_LIMIT_MAX / RATE_LIMIT_WINDOW.
+  const rateLimitDisabled = process.env["RATE_LIMIT_DISABLED"] === "1";
+  await app.register(rateLimit, {
+    max: Number(process.env["RATE_LIMIT_MAX"] ?? 1000),
+    timeWindow: process.env["RATE_LIMIT_WINDOW"] ?? "1 minute",
+    skipOnError: true,
+    // allowList bypasses BOTH global and per-route limits — used in dev/CI to
+    // avoid the 5-logins-per-15-min on auth endpoints from blocking flows.
+    allowList: rateLimitDisabled ? () => true : undefined,
+    keyGenerator: (req) => {
+      const xff = req.headers["x-forwarded-for"];
+      if (typeof xff === "string" && xff.length > 0) {
+        return xff.split(",")[0]!.trim();
+      }
+      return req.ip;
+    },
+  });
   await app.register(websocket);
 
   // custom plugins

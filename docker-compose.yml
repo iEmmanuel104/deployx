@@ -36,7 +36,10 @@ services:
       - internal-network
 
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    # v0.4.2 (Caddy-based) is required: older haproxy-based versions do not
+    # forward the Docker API version header, which Engine 25+ rejects.
+    # See: https://github.com/Tecnativa/docker-socket-proxy/releases/tag/v0.4.2
+    image: tecnativa/docker-socket-proxy:v0.4.2
     restart: always
     read_only: true
     environment:
@@ -46,6 +49,11 @@ services:
       BUILD: 1
       POST: 1
       EVENTS: 1
+      # Required for Nixpacks builds via the Docker CLI:
+      INFO: 1
+      VERSION: 1
+      PING: 1
+      AUTH: 1
       EXEC: 0
       SERVICES: 0
       SECRETS: 0
@@ -66,6 +74,9 @@ services:
       - deployx-builds:/builds
     env_file:
       - .env
+    environment:
+      # Docker CLI (used by Nixpacks) talks to the socket proxy, not /var/run/docker.sock
+      - DOCKER_HOST=tcp://docker-proxy:2375
     depends_on:
       - docker-proxy
     networks:
@@ -73,7 +84,7 @@ services:
       - internal-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.deployx-api.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.deployx-api.rule=Host(`${PLATFORM_DOMAIN:-localhost}`) && PathPrefix(`/api/v1`)"
       - "traefik.http.routers.deployx-api.priority=100"
       - "traefik.http.routers.deployx-api.entrypoints=websecure"
       - "traefik.http.routers.deployx-api.tls=true"

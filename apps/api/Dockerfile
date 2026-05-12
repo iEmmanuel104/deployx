@@ -30,7 +30,22 @@ RUN pnpm turbo build --filter=@deployx/api
 
 FROM base AS runner
 RUN apt-get update -qq && apt-get install -y -qq curl git && rm -rf /var/lib/apt/lists/*
-RUN addgroup --system --gid 1001 deployx && adduser --system --uid 1001 deployx
+
+# Docker CLI required at runtime because Nixpacks shells out to `docker build`.
+# DOCKER_HOST is set at the compose level to point at docker-socket-proxy,
+# so this container never needs direct access to /var/run/docker.sock.
+COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+# buildx is a docker plugin and is required for modern `docker build` (BuildKit
+# is on by default in Docker 23+). Without it, Nixpacks builds fail with
+# "BuildKit is enabled but the buildx component is missing or broken."
+COPY --from=docker:27-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
+
+# Use a real home dir so docker buildx + nixpacks can write their state files.
+# Without --home, adduser sets HOME=/nonexistent which breaks docker-buildx.
+RUN addgroup --system --gid 1001 deployx \
+ && adduser --system --uid 1001 --ingroup deployx --home /home/deployx --shell /bin/sh deployx \
+ && mkdir -p /home/deployx/.docker /home/deployx/.cache /home/deployx/.local \
+ && chown -R deployx:deployx /home/deployx
 WORKDIR /app
 
 # Copy everything from builder (preserves pnpm symlink structure)

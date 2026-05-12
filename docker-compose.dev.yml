@@ -14,7 +14,8 @@ volumes:
 
 services:
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
+    # v0.4.2 (Caddy-based) — older haproxy versions break Engine 25+.
+    image: tecnativa/docker-socket-proxy:v0.4.2
     restart: always
     tmpfs:
       - /tmp

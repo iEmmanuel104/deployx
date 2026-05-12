@@ -1,0 +1,139 @@
+# DeployX local end-to-end test stack.
+#
+# Combines the dev compose's "build from source" with a minimal Traefik
+# fronting the API + dashboard on port 80 only (no TLS, no Let's Encrypt).
+# Used to validate the full DeployX pipeline against a real test app like
+# keep-alive-pinger without touching production or hitting LE rate limits.
+#
+# Usage:
+#   docker network create proxy-network 2>/dev/null || true
+#   docker compose --env-file .env.local -f docker-compose.local.yml up -d --build
+#   docker compose --env-file .env.local -f docker-compose.local.yml logs -f
+#   docker compose --env-file .env.local -f docker-compose.local.yml down
+#
+# Required env (.env.local):
+#   PLATFORM_DOMAIN=localhost
+#   ENCRYPTION_KEY=<64 hex chars>
+#   JWT_SECRET=<64 hex chars>
+
+networks:
+  proxy-network:
+    external: true
+  internal-network:
+    driver: bridge
+    internal: true
+
+volumes:
+  deployx-data: {}
+  deployx-builds: {}
+
+services:
+  traefik:
+    image: traefik:latest
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=proxy-network
+      - --providers.docker.endpoint=tcp://docker-proxy:2375
+      - --entrypoints.web.address=:80
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --log.level=INFO
+    depends_on:
+      - docker-proxy
+    ports:
+      - "80:80"
+      - "8080:8080"  # Traefik dashboard (HTTP, local only)
+    networks:
+      - proxy-network
+      - internal-network
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.2
+    restart: always
+    tmpfs:
+      - /tmp
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      BUILD: 1
+      POST: 1
+      EVENTS: 1
+      # Required for Nixpacks builds via the Docker CLI:
+      INFO: 1
+      VERSION: 1
+      PING: 1
+      AUTH: 1
+      EXEC: 0
+      SERVICES: 0
+      SECRETS: 0
+      CONFIGS: 0
+      VOLUMES: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal-network
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - deployx-data:/data
+      - deployx-builds:/builds
+    environment:
+      - PLATFORM_DOMAIN=${PLATFORM_DOMAIN:-localhost}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_PATH=/data/platform.db
+      - PORT=3001
+      - NODE_ENV=production
+      - DEPLOYX_BUILDS_DIR=/builds
+      # Point docker CLI (used by Nixpacks) at the socket proxy
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      # Force legacy docker build — BuildKit session protocol needs websocket
+      # upgrade through the socket proxy which isn't allowlisted. Tracked
+      # separately as a real prod bug.
+      - DOCKER_BUILDKIT=0
+      # Disable rate limits for local dev test runs (re-deploys + polling)
+      - RATE_LIMIT_DISABLED=1
+    depends_on:
+      - docker-proxy
+    networks:
+      - proxy-network
+      - internal-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy-network
+      - traefik.http.routers.deployx-api.rule=Host(`localhost`) && PathPrefix(`/api/v1`)
+      - traefik.http.routers.deployx-api.entrypoints=web
+      - traefik.http.routers.deployx-api.priority=100
+      - traefik.http.services.deployx-api.loadbalancer.server.port=3001
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - API_URL=http://api:3001
+      - PUBLIC_API_URL=http://localhost
+    depends_on:
+      - api
+    networks:
+      - proxy-network
+      - internal-network
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=proxy-network
+      - traefik.http.routers.deployx-dashboard.rule=Host(`localhost`)
+      - traefik.http.routers.deployx-dashboard.entrypoints=web
+      - traefik.http.routers.deployx-dashboard.priority=50
+      - traefik.http.services.deployx-dashboard.loadbalancer.server.port=3000
