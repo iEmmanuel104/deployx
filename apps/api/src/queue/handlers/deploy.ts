@@ -41,16 +41,37 @@ export async function handleDeployJob(ctx: JobContext): Promise<void> {
   }
   env.push(`PORT=${String(payload.port)}`);
 
-  // Create and start container
-  const containerId = await docker.createAndStartContainer({
-    name: containerName,
-    image: payload.imageTag,
-    env,
-    labels,
-    exposedPorts: [payload.port],
-    networkName: "proxy-network",
-    restartPolicy: "unless-stopped",
-  });
+  // Create and start container.
+  // A6: surface any failure back onto the deployment + project rows so the
+  // dashboard sees an actual `failed` state with a readable error message
+  // rather than a deployment stuck in `deploying` forever.
+  let containerId: string;
+  try {
+    containerId = await docker.createAndStartContainer({
+      name: containerName,
+      image: payload.imageTag,
+      env,
+      labels,
+      exposedPorts: [payload.port],
+      networkName: "proxy-network",
+      restartPolicy: "unless-stopped",
+    });
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    await db
+      .update(deployments)
+      .set({ status: "failed", errorMsg, finishedAt: now() })
+      .where(eq(deployments.id, payload.deploymentId));
+    await db
+      .update(projects)
+      .set({ status: "error", updatedAt: now() })
+      .where(eq(projects.id, payload.projectId));
+    logger.error(
+      { err, slug: payload.slug, deploymentId: payload.deploymentId },
+      "Container start failed",
+    );
+    throw err;
+  }
 
   // Update deployment as successful
   await db

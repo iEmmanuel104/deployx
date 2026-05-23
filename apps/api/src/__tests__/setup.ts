@@ -27,9 +27,9 @@ const DDL_STATEMENTS = [
     started_at TEXT, finished_at TEXT, created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS domains (
-    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, domain TEXT NOT NULL UNIQUE,
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, domain TEXT NOT NULL,
     is_primary INTEGER DEFAULT 0, ssl_status TEXT DEFAULT 'pending',
-    ssl_cert_exp TEXT, verified_at TEXT, created_at TEXT NOT NULL
+    ssl_cert_exp TEXT, verified_at TEXT, created_at TEXT NOT NULL, deleted_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS env_vars (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL,
@@ -52,6 +52,11 @@ const DDL_STATEMENTS = [
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE, last_used_at TEXT, expires_at TEXT,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS idempotency_keys (
+    key TEXT PRIMARY KEY, user_id TEXT NOT NULL,
+    response_hash TEXT NOT NULL, status_code INTEGER NOT NULL,
+    body TEXT NOT NULL, created_at TEXT NOT NULL
   )`,
 ];
 
