@@ -167,13 +167,25 @@ importers:
 
   packages/builder:
     dependencies:
+      '@deployx/docker':
+        specifier: workspace:*
+        version: link:../docker
       '@deployx/types':
         specifier: workspace:*
         version: link:../types
+      tar-fs:
+        specifier: ^2.1.4
+        version: 2.1.4
+      ulidx:
+        specifier: ^2.4.1
+        version: 2.4.1
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
         version: 25.5.2
+      '@types/tar-fs':
+        specifier: ^2.0.4
+        version: 2.0.4
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -1245,6 +1257,12 @@ packages:
 
   '@types/ssh2@1.15.5':
     resolution: {integrity: sha512-N1ASjp/nXH3ovBHddRJpli4ozpk6UdDYIX4RJWFa9L1YKnzdhTlVmiGHm4DZnj/jLbqZpes4aeR30EFGQtvhQQ==}
+
+  '@types/tar-fs@2.0.4':
+    resolution: {integrity: sha512-ipPec0CjTmVDWE+QKr9cTmIIoTl7dFG/yARCM5MqK8i6CNLIG1P8x4kwDsOQY1ChZOZjH0wO9nvfgBvWl4R3kA==}
+
+  '@types/tar-stream@3.1.4':
+    resolution: {integrity: sha512-921gW0+g29mCJX0fRvqeHzBlE/XclDaAG0Ousy1LCghsOhvaKacDeRGEVzQP9IPfKn8Vysy7FEXAIxycpc/CMg==}
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -3408,6 +3426,15 @@ snapshots:
   '@types/ssh2@1.15.5':
     dependencies:
       '@types/node': 18.19.130
+
+  '@types/tar-fs@2.0.4':
+    dependencies:
+      '@types/node': 25.5.2
+      '@types/tar-stream': 3.1.4
+
+  '@types/tar-stream@3.1.4':
+    dependencies:
+      '@types/node': 25.5.2
 
   '@types/trusted-types@2.0.7': {}
 

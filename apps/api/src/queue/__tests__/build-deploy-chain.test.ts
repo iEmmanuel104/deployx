@@ -4,13 +4,22 @@ import { createDb, buildJobs, deployments, projects, users } from "@deployx/db";
 import { handleBuildJob } from "../../queue/handlers/build.js";
 import type { JobContext } from "../processor.js";
 
-// Mock the builder module
+// Mock the builder module — Nixpacks now generates a Dockerfile, then we
+// build the image via the docker HTTP API (no buildx shellout).
 vi.mock("@deployx/builder", () => ({
   buildWithNixpacks: vi.fn().mockResolvedValue({
-    imageTag: "deployx/test-app:v1",
-    buildLog: "Build succeeded",
-    durationMs: 5000,
+    contextDir: "/builds/test-app",
+    dockerfile: ".nixpacks/Dockerfile",
+    buildLog: "Dockerfile generated",
+    durationMs: 1000,
   }),
+  buildImageFromContext: vi.fn().mockResolvedValue({
+    imageId: "sha256:abc123",
+    imageTag: "deployx/test-app:v1",
+    durationMs: 4000,
+  }),
+  cloneRepo: vi.fn(),
+  cleanupBuildDir: vi.fn(),
 }));
 
 function createTestDb() {

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExecFile } = vi.hoisted(() => ({
+const { mockExecFile, mockMkdtemp, mockRename, mockRm, mockAccess } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
+  mockMkdtemp: vi.fn(),
+  mockRename: vi.fn(),
+  mockRm: vi.fn(),
+  mockAccess: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -10,6 +14,12 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:util", () => ({
   promisify: () => mockExecFile,
 }));
+vi.mock("node:fs/promises", () => ({
+  mkdtemp: mockMkdtemp,
+  rename: mockRename,
+  rm: mockRm,
+  access: mockAccess,
+}));
 
 import { buildWithNixpacks } from "../nixpacks.js";
 
@@ -17,12 +27,16 @@ describe("buildWithNixpacks", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExecFile.mockResolvedValue({
-      stdout: "Successfully built image",
+      stdout: "Successfully generated Dockerfile",
       stderr: "",
     });
+    mockMkdtemp.mockResolvedValue("/tmp/deployx-nixpacks-test-out");
+    mockAccess.mockResolvedValue(undefined);
+    mockRename.mockResolvedValue(undefined);
+    mockRm.mockResolvedValue(undefined);
   });
 
-  it("calls nixpacks with correct base args", async () => {
+  it("calls nixpacks with --out flag to generate Dockerfile (no docker build)", async () => {
     await buildWithNixpacks({
       sourceDir: "/builds/myapp-abc",
       imageTag: "deployx/myapp:v1",
@@ -30,11 +44,14 @@ describe("buildWithNixpacks", () => {
       noCache: false,
     });
 
-    expect(mockExecFile).toHaveBeenCalledWith(
-      "nixpacks",
-      ["build", "/builds/myapp-abc", "--name", "deployx/myapp:v1"],
-      expect.objectContaining({ timeout: 600_000 }),
-    );
+    const args = mockExecFile.mock.calls[0]![1] as string[];
+    expect(mockExecFile.mock.calls[0]![0]).toBe("nixpacks");
+    expect(args[0]).toBe("build");
+    expect(args[1]).toBe("/builds/myapp-abc");
+    expect(args).toContain("--out");
+    expect(args[args.indexOf("--out") + 1]).toBe("/tmp/deployx-nixpacks-test-out");
+    // CRITICAL: no --name flag — that would trigger the buildx shellout
+    expect(args).not.toContain("--name");
   });
 
   it("adds --build-cmd when provided", async () => {
@@ -94,9 +111,9 @@ describe("buildWithNixpacks", () => {
     expect(envFlags).toContain("API_URL=https://api.test");
   });
 
-  it("returns BuildResult on success", async () => {
+  it("returns NixpacksGenerateResult on success", async () => {
     mockExecFile.mockResolvedValue({
-      stdout: "Build complete",
+      stdout: "Dockerfile generated",
       stderr: "warning: something",
     });
 
@@ -107,15 +124,16 @@ describe("buildWithNixpacks", () => {
       noCache: false,
     });
 
-    expect(result.imageTag).toBe("deployx/myapp:v1");
-    expect(result.buildLog).toContain("Build complete");
+    expect(result.contextDir).toBe("/builds/myapp");
+    expect(result.dockerfile).toBe(".nixpacks/Dockerfile");
+    expect(result.buildLog).toContain("Dockerfile generated");
     expect(result.buildLog).toContain("warning: something");
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("throws NixpacksBuildError on failure", async () => {
+  it("throws NixpacksBuildError on nixpacks failure", async () => {
     const error = Object.assign(new Error("exit code 1"), {
-      stdout: "Partial build output",
+      stdout: "Partial output",
       stderr: "Error: build failed",
     });
     mockExecFile.mockRejectedValue(error);
@@ -128,6 +146,18 @@ describe("buildWithNixpacks", () => {
         noCache: false,
       }),
     ).rejects.toThrow("Nixpacks build failed");
+  });
+
+  it("throws NixpacksBuildError when .nixpacks directory is missing from out dir", async () => {
+    mockAccess.mockRejectedValue(new Error("ENOENT"));
+    await expect(
+      buildWithNixpacks({
+        sourceDir: "/builds/myapp",
+        imageTag: "deployx/myapp:v1",
+        buildType: "nixpacks",
+        noCache: false,
+      }),
+    ).rejects.toThrow("did not produce a .nixpacks/ directory");
   });
 
   it("rejects metachar commands before calling nixpacks", async () => {

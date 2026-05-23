@@ -1,5 +1,5 @@
 import { ulid } from "ulidx";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import type { DeployxDb } from "@deployx/db";
 import { buildJobs, deployments } from "@deployx/db";
 import type {
@@ -16,6 +16,62 @@ type JobPayload =
   | DeployJobPayload
   | StopJobPayload
   | RestartJobPayload;
+
+/**
+ * Thrown when a caller tries to enqueue a build for a project that already has
+ * a pending or running build job. The API layer converts this to HTTP 409.
+ */
+export class BuildAlreadyInProgressError extends Error {
+  readonly code = "BUILD_ALREADY_IN_PROGRESS";
+  readonly statusCode = 409;
+  readonly projectId: string;
+  readonly existingJobId: string;
+  readonly existingDeploymentId: string;
+
+  constructor(opts: {
+    projectId: string;
+    existingJobId: string;
+    existingDeploymentId: string;
+  }) {
+    super(
+      `A build is already pending or running for project ${opts.projectId} (job ${opts.existingJobId})`,
+    );
+    this.name = "BuildAlreadyInProgressError";
+    this.projectId = opts.projectId;
+    this.existingJobId = opts.existingJobId;
+    this.existingDeploymentId = opts.existingDeploymentId;
+  }
+}
+
+/**
+ * Returns the in-flight build job (status: pending|running) for a project, or
+ * null. Used to dedupe deploy requests so a single project cannot have two
+ * concurrent builds in the queue.
+ */
+export async function findInFlightBuildForProject(
+  db: DeployxDb,
+  projectId: string,
+): Promise<{ jobId: string; deploymentId: string } | null> {
+  const rows = await db
+    .select({
+      jobId: buildJobs.id,
+      deploymentId: buildJobs.deploymentId,
+    })
+    .from(buildJobs)
+    .innerJoin(deployments, eq(buildJobs.deploymentId, deployments.id))
+    .where(
+      and(
+        eq(buildJobs.type, "build"),
+        eq(deployments.projectId, projectId),
+        inArray(buildJobs.status, ["pending", "running"]),
+      ),
+    )
+    .limit(1);
+
+  const row = rows[0];
+  if (!row) return null;
+  return { jobId: row.jobId, deploymentId: row.deploymentId };
+}
 
 /**
  * Enqueues a new job into the build_jobs table.
@@ -61,6 +117,17 @@ export async function createDeploymentAndEnqueueBuild(
     buildPayload: Omit<BuildJobPayload, "deploymentId">;
   },
 ): Promise<{ deploymentId: string; jobId: string }> {
+  // Refuse if there is already an in-flight build for this project so the
+  // build queue cannot be flooded by repeated POST /deploy clicks.
+  const existing = await findInFlightBuildForProject(db, opts.projectId);
+  if (existing) {
+    throw new BuildAlreadyInProgressError({
+      projectId: opts.projectId,
+      existingJobId: existing.jobId,
+      existingDeploymentId: existing.deploymentId,
+    });
+  }
+
   const deploymentId = ulid();
   const now = new Date().toISOString();
 
