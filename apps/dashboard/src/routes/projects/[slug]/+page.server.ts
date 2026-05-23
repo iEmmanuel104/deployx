@@ -7,28 +7,12 @@ export const load: PageServerLoad = async ({ params, fetch, cookies, locals }) =
 
   const api = createServerApiClient(fetch, cookies);
 
-  // Resolve slug to project ID
   const projectsResult = await api.getProjects();
   if (!projectsResult.ok) throw error(500, "Failed to load projects");
 
-  const projects = projectsResult.data as Array<{
-    id: string;
-    slug: string;
-    name: string;
-    sourceType: string;
-    gitRepo?: string;
-    gitBranch?: string;
-    buildType: string;
-    port?: number;
-    status: string;
-    createdAt: string;
-    updatedAt: string;
-  }>;
-
-  const project = projects.find((p) => p.slug === params.slug);
+  const project = projectsResult.data.find((p) => p.slug === params.slug);
   if (!project) throw error(404, "Project not found");
 
-  // Fetch all related data in parallel
   const [deploymentsResult, domainsResult, envVarsResult] = await Promise.all([
     api.getDeployments(project.id),
     api.getDomains(project.id),
@@ -37,8 +21,8 @@ export const load: PageServerLoad = async ({ params, fetch, cookies, locals }) =
 
   return {
     project,
-    deployments: (deploymentsResult.ok ? deploymentsResult.data : []) as import("$lib/api.js").Deployment[],
-    domains: (domainsResult.ok ? domainsResult.data : []) as import("$lib/api.js").Domain[],
-    envVars: (envVarsResult.ok ? envVarsResult.data : []) as import("$lib/api.js").EnvVar[],
+    deployments: deploymentsResult.ok ? deploymentsResult.data : [],
+    domains: domainsResult.ok ? domainsResult.data : [],
+    envVars: envVarsResult.ok ? envVarsResult.data : [],
   };
 };

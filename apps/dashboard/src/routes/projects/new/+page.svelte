@@ -1,7 +1,13 @@
 <script lang="ts">
-  import { goto } from "$app/navigation";
-  import { getToken } from "$lib/auth.svelte.js";
+  import { enhance } from "$app/forms";
   import Button from "$lib/components/ui/Button.svelte";
+  import type { ActionData } from "./$types";
+
+  let { form }: { form: ActionData } = $props();
+
+  // Use the RegExp constructor instead of a `/v`-flagged literal. The `/v`
+  // flag is rejected by some toolchains; the constructor compiles at runtime.
+  const SLUG_REGEX = new RegExp("^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$");
 
   let name = $state("");
   let slug = $state("");
@@ -10,9 +16,8 @@
   let gitRepo = $state("");
   let gitBranch = $state("main");
   let buildType = $state("nixpacks");
-  let port = $state(3000);
-  let error = $state("");
-  let loading = $state(false);
+  let port = $state<number>(3000);
+  let submitting = $state(false);
 
   let autoSlug = $derived(
     name
@@ -21,7 +26,7 @@
       .replace(/\s+/g, "-")
       .replace(/-+/g, "-")
       .replace(/^-|-$/g, "")
-      .slice(0, 48)
+      .slice(0, 48),
   );
 
   $effect(() => {
@@ -35,50 +40,7 @@
   }
 
   let showGitFields = $derived(sourceType === "git");
-
-  async function handleSubmit(e: Event) {
-    e.preventDefault();
-    error = "";
-    loading = true;
-
-    try {
-      const body: Record<string, unknown> = {
-        name,
-        slug,
-        source_type: sourceType,
-        build_type: buildType,
-        port,
-      };
-
-      if (sourceType === "git") {
-        body.git_repo = gitRepo;
-        body.git_branch = gitBranch;
-      }
-
-      const token = getToken();
-      const res = await fetch("/api/v1/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(body),
-        credentials: "include",
-      });
-
-      const data = await res.json();
-
-      if (!data.ok) {
-        throw new Error(data.error?.message ?? "Failed to create project");
-      }
-
-      await goto(`/projects/${slug}`);
-    } catch (err) {
-      error = err instanceof Error ? err.message : "Failed to create project";
-    } finally {
-      loading = false;
-    }
-  }
+  let slugInvalid = $derived(slug !== "" && !SLUG_REGEX.test(slug));
 </script>
 
 <div class="p-8">
@@ -93,10 +55,20 @@
     <p class="mt-1 text-sm text-slate-400">Configure and deploy a new application</p>
   </div>
 
-  <form onsubmit={handleSubmit} class="max-w-2xl space-y-6 rounded-xl border border-surface-lighter bg-surface-light p-8">
-    {#if error}
+  <form
+    method="POST"
+    use:enhance={() => {
+      submitting = true;
+      return async ({ update }) => {
+        await update();
+        submitting = false;
+      };
+    }}
+    class="max-w-2xl space-y-6 rounded-xl border border-surface-lighter bg-surface-light p-8"
+  >
+    {#if form?.error}
       <div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-        {error}
+        {form.error}
       </div>
     {/if}
 
@@ -105,6 +77,7 @@
       <label for="name" class="block text-sm font-medium text-slate-300">Project Name</label>
       <input
         id="name"
+        name="name"
         type="text"
         bind:value={name}
         required
@@ -118,16 +91,25 @@
       <label for="slug" class="block text-sm font-medium text-slate-300">Slug</label>
       <input
         id="slug"
+        name="slug"
         type="text"
         bind:value={slug}
         oninput={handleSlugInput}
         required
         maxlength={48}
-        pattern="[a-z0-9][a-z0-9-]*[a-z0-9]"
         placeholder="my-awesome-app"
-        class="w-full rounded-lg border border-surface-lighter bg-surface px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+        aria-invalid={slugInvalid}
+        class="w-full rounded-lg border bg-surface px-4 py-2.5 text-sm text-slate-200 placeholder-slate-500 outline-none transition-colors focus:ring-1 {slugInvalid
+          ? 'border-red-500/60 focus:border-red-500 focus:ring-red-500'
+          : 'border-surface-lighter focus:border-brand-500 focus:ring-brand-500'}"
       />
-      <p class="text-xs text-slate-500">Lowercase letters, numbers, and hyphens only. Max 48 characters.</p>
+      <p class="text-xs {slugInvalid ? 'text-red-400' : 'text-slate-500'}">
+        {#if slugInvalid}
+          Slug must start and end with an alphanumeric character, contain only lowercase letters/numbers/hyphens, and be 1-48 characters.
+        {:else}
+          Lowercase letters, numbers, and hyphens only. Max 48 characters.
+        {/if}
+      </p>
     </div>
 
     <!-- Source Type -->
@@ -135,6 +117,7 @@
       <label for="sourceType" class="block text-sm font-medium text-slate-300">Source Type</label>
       <select
         id="sourceType"
+        name="sourceType"
         bind:value={sourceType}
         class="w-full rounded-lg border border-surface-lighter bg-surface px-4 py-2.5 text-sm text-slate-200 outline-none transition-colors focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
       >
@@ -152,6 +135,7 @@
           <label for="gitRepo" class="block text-sm font-medium text-slate-300">Git Repository URL</label>
           <input
             id="gitRepo"
+            name="gitRepo"
             type="url"
             bind:value={gitRepo}
             required
@@ -163,6 +147,7 @@
           <label for="gitBranch" class="block text-sm font-medium text-slate-300">Branch</label>
           <input
             id="gitBranch"
+            name="gitBranch"
             type="text"
             bind:value={gitBranch}
             placeholder="main"
@@ -177,6 +162,7 @@
       <label for="buildType" class="block text-sm font-medium text-slate-300">Build Type</label>
       <select
         id="buildType"
+        name="buildType"
         bind:value={buildType}
         class="w-full rounded-lg border border-surface-lighter bg-surface px-4 py-2.5 text-sm text-slate-200 outline-none transition-colors focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
       >
@@ -200,6 +186,7 @@
       <label for="port" class="block text-sm font-medium text-slate-300">Application Port</label>
       <input
         id="port"
+        name="port"
         type="number"
         bind:value={port}
         min={1}
@@ -211,12 +198,8 @@
 
     <!-- Actions -->
     <div class="flex items-center gap-3 pt-2">
-      <Button type="submit" variant="primary" {loading}>
-        {#if loading}
-          Creating...
-        {:else}
-          Create Project
-        {/if}
+      <Button type="submit" variant="primary" loading={submitting} disabled={slugInvalid}>
+        {submitting ? "Creating..." : "Create Project"}
       </Button>
       <a
         href="/projects"

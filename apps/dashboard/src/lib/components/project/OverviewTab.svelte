@@ -1,7 +1,7 @@
 <script lang="ts">
   import StatusBadge from "$lib/components/ui/StatusBadge.svelte";
   import Button from "$lib/components/ui/Button.svelte";
-  import { getToken } from "$lib/auth.svelte.js";
+  import { api } from "$lib/api-client.js";
   import type { Project, Deployment } from "$lib/api.js";
 
   let {
@@ -20,25 +20,23 @@
   let latestDeployment = $derived(deployments.length > 0 ? deployments[0] : null);
   let isRunning = $derived(project.status === "running");
 
-  async function apiAction(endpoint: string, setLoading: (v: boolean) => void) {
+  type Action = "deploy" | "stop" | "restart";
+
+  async function apiAction(action: Action, setLoading: (v: boolean) => void) {
     actionError = null;
     setLoading(true);
     try {
-      const token = getToken();
-      const res = await fetch(`/api/v1/projects/${project.id}/${endpoint}`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (!data.ok) {
-        actionError = data.error?.message ?? `Failed to ${endpoint}`;
+      const res =
+        action === "deploy"
+          ? await api.deploy(project.id)
+          : action === "stop"
+            ? await api.stop(project.id)
+            : await api.restart(project.id);
+      if (!res.ok) {
+        actionError = res.error?.message ?? `Failed to ${action}`;
       }
-    } catch (err) {
-      actionError = `Failed to ${endpoint}. Please try again.`;
+    } catch {
+      actionError = `Failed to ${action}. Please try again.`;
     } finally {
       setLoading(false);
     }
@@ -113,15 +111,30 @@
         </div>
       {/if}
       <div class="flex flex-wrap gap-3">
-        <Button variant="primary" loading={deploying} onclick={handleDeploy}>
-          Deploy
+        <Button
+          variant="primary"
+          loading={deploying}
+          disabled={stopping || restarting}
+          onclick={handleDeploy}
+        >
+          {deploying ? "Deploying..." : "Deploy"}
         </Button>
         {#if isRunning}
-          <Button variant="danger" loading={stopping} onclick={handleStop}>
-            Stop
+          <Button
+            variant="danger"
+            loading={stopping}
+            disabled={deploying || restarting}
+            onclick={handleStop}
+          >
+            {stopping ? "Stopping..." : "Stop"}
           </Button>
-          <Button variant="secondary" loading={restarting} onclick={handleRestart}>
-            Restart
+          <Button
+            variant="secondary"
+            loading={restarting}
+            disabled={deploying || stopping}
+            onclick={handleRestart}
+          >
+            {restarting ? "Restarting..." : "Restart"}
           </Button>
         {/if}
       </div>

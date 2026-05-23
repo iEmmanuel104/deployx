@@ -5,16 +5,7 @@
 
   let { data }: { data: PageData } = $props();
 
-  let projects = $derived(data.projects as Array<{
-    id: string;
-    name: string;
-    slug: string;
-    sourceType: string;
-    buildType: string;
-    status: string;
-    updatedAt: string;
-    createdAt: string;
-  }>);
+  let projects = $derived(data.projects);
 
   function formatRelativeTime(dateStr: string): string {
     const now = Date.now();

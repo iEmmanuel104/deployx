@@ -2,7 +2,7 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import { goto } from "$app/navigation";
-  import { getToken } from "$lib/auth.svelte.js";
+  import { api } from "$lib/api-client.js";
   import type { Project } from "$lib/api.js";
 
   let { project }: { project: Project } = $props();
@@ -15,25 +15,16 @@
   let canDelete = $derived(confirmSlug === project.slug);
 
   async function handleDelete() {
-    if (!canDelete) return;
+    if (!canDelete || deleting) return;
 
     deleteError = null;
     deleting = true;
     try {
-      const token = getToken();
-      const res = await fetch(`/api/v1/projects/${project.id}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (data.ok) {
+      const res = await api.deleteProject(project.id);
+      if (res.ok) {
         await goto("/projects");
       } else {
-        deleteError = data.error?.message ?? "Failed to delete project";
+        deleteError = res.error?.message ?? "Failed to delete project";
       }
     } catch {
       deleteError = "Failed to delete project. Please try again.";
@@ -107,8 +98,8 @@
       <Button variant="secondary" onclick={() => (deleteModalOpen = false)}>
         Cancel
       </Button>
-      <Button variant="danger" loading={deleting} disabled={!canDelete} onclick={handleDelete}>
-        Delete Project
+      <Button variant="danger" loading={deleting} disabled={!canDelete || deleting} onclick={handleDelete}>
+        {deleting ? "Deleting..." : "Delete Project"}
       </Button>
     </div>
   </div>

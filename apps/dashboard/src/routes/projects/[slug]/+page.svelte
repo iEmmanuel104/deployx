@@ -53,20 +53,69 @@
     </nav>
   </div>
 
-  <!-- Tab content -->
+  <!-- Tab content. Each tab is wrapped in a Svelte 5 <svelte:boundary> so an
+       error in one tab (render or onMount) cannot kill the rest of the page —
+       the user can still switch tabs and recover. -->
   <div>
     {#if activeTab === "overview"}
-      <OverviewTab project={data.project} deployments={data.deployments} />
+      <svelte:boundary>
+        <OverviewTab project={data.project} deployments={data.deployments} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Overview", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if activeTab === "deployments"}
-      <DeploymentsTab deployments={data.deployments} projectId={data.project.id} />
+      <svelte:boundary>
+        <DeploymentsTab deployments={data.deployments} projectId={data.project.id} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Deployments", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if activeTab === "logs"}
-      <LogsTab projectId={data.project.id} />
+      <svelte:boundary>
+        <LogsTab projectId={data.project.id} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Logs", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if activeTab === "domains"}
-      <DomainsTab domains={data.domains} projectId={data.project.id} />
+      <svelte:boundary>
+        <DomainsTab domains={data.domains} projectId={data.project.id} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Domains", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if activeTab === "environment"}
-      <EnvVarsTab envVars={data.envVars} projectId={data.project.id} />
+      <svelte:boundary>
+        <EnvVarsTab envVars={data.envVars} projectId={data.project.id} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Environment", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {:else if activeTab === "settings"}
-      <SettingsTab project={data.project} />
+      <svelte:boundary>
+        <SettingsTab project={data.project} />
+        {#snippet failed(error, reset)}
+          {@render tabFallback("Settings", error, reset)}
+        {/snippet}
+      </svelte:boundary>
     {/if}
   </div>
+
+  {#snippet tabFallback(tabName: string, error: unknown, reset: () => void)}
+    <div class="rounded-xl border border-red-500/30 bg-red-500/10 p-6">
+      <h3 class="mb-2 text-base font-semibold text-red-300">
+        {tabName} failed to render
+      </h3>
+      <p class="mb-4 text-sm text-red-300/80">
+        {error instanceof Error ? error.message : "Unknown error"}
+      </p>
+      <button
+        onclick={reset}
+        class="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-500/20"
+      >
+        Retry
+      </button>
+    </div>
+  {/snippet}
 </div>
