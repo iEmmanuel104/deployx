@@ -7,6 +7,9 @@ const DDL_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL,
     name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', avatar_url TEXT,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    token_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
   )`,
   `CREATE TABLE IF NOT EXISTS projects (
@@ -60,6 +63,9 @@ export async function createTestApp(): Promise<FastifyInstance> {
   process.env["PLATFORM_DOMAIN"] = "test.deployx.dev";
   process.env["NODE_ENV"] = "test";
   process.env["QUEUE_POLL_MS"] = "999999"; // Effectively disable queue polling during tests
+  // Per-route SEC rate limits (register: 3/hr, login: 5/15min) would otherwise
+  // false-fail tests that intentionally register/login many times in a row.
+  process.env["RATE_LIMIT_DISABLED"] = "1";
 
   const app = await buildApp();
 
