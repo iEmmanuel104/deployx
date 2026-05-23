@@ -79,7 +79,11 @@ describe("Idempotency-Key", () => {
     expect(second.statusCode).toBe(422);
   });
 
-  it("falls through normally when no Idempotency-Key is provided", async () => {
+  it("falls through normally when no Idempotency-Key is provided (BUILD dedup still applies on same project)", async () => {
+    // Idempotency and build-dedup are layered: idempotency dedupes by
+    // (user, key) — build-dedup protects against parallel builds for the same
+    // project even without a key. Same project, two deploys, no key: first
+    // 202, second 409 BUILD_ALREADY_IN_PROGRESS.
     const projectId = await createProject(app, token, "idem-no-header");
 
     const a = await app.inject({
@@ -94,8 +98,29 @@ describe("Idempotency-Key", () => {
     });
 
     expect(a.statusCode).toBe(202);
+    expect(b.statusCode).toBe(409);
+    const bodyB = JSON.parse(b.body);
+    expect(bodyB.ok).toBe(false);
+    expect(bodyB.error.code).toBe("BUILD_ALREADY_IN_PROGRESS");
+  });
+
+  it("two deploys of DIFFERENT projects without a key both succeed", async () => {
+    const p1 = await createProject(app, token, "idem-distinct-a");
+    const p2 = await createProject(app, token, "idem-distinct-b");
+
+    const a = await app.inject({
+      method: "POST",
+      url: `/api/v1/projects/${p1}/deploy`,
+      headers: authHeaders(token),
+    });
+    const b = await app.inject({
+      method: "POST",
+      url: `/api/v1/projects/${p2}/deploy`,
+      headers: authHeaders(token),
+    });
+
+    expect(a.statusCode).toBe(202);
     expect(b.statusCode).toBe(202);
-    // distinct deployments because no key was sent
     expect(JSON.parse(a.body).data.deploymentId).not.toBe(
       JSON.parse(b.body).data.deploymentId,
     );

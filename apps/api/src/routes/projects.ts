@@ -199,7 +199,7 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      return withIdempotency(fastify.db, request, reply, async () => {
+      return withIdempotency<unknown>(fastify.db, request, reply, async () => {
         const imageTag = `deployx/${project.slug}:deploy-${ulid()}`;
 
         try {

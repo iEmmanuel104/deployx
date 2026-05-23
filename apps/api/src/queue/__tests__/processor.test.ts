@@ -10,6 +10,9 @@ function createTestDb() {
   db.run(sql.raw(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL,
     name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'member', avatar_url TEXT,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT,
+    token_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
   )`));
   db.run(sql.raw(`CREATE TABLE IF NOT EXISTS projects (
