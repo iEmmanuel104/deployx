@@ -8,6 +8,9 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
   role: text("role").default("member").notNull(), // admin | member
   avatarUrl: text("avatar_url"),
+  failedLoginAttempts: integer("failed_login_attempts").default(0).notNull(),
+  lockedUntil: text("locked_until"),
+  tokenVersion: integer("token_version").default(0).notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   deletedAt: text("deleted_at"),                  // soft delete
@@ -16,7 +19,7 @@ export const users = sqliteTable("users", {
 // projects table
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   description: text("description"),
@@ -33,12 +36,14 @@ export const projects = sqliteTable("projects", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   deletedAt: text("deleted_at"),
-});
+}, (table) => [
+  index("idx_projects_user_id").on(table.userId),
+]);
 
 // deployments table
 export const deployments = sqliteTable("deployments", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull().references(() => projects.id),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   version: integer("version").notNull(),
   trigger: text("trigger").notNull(),             // git_push | cli | webhook | manual
   commitSha: text("commit_sha"),
@@ -50,24 +55,29 @@ export const deployments = sqliteTable("deployments", {
   startedAt: text("started_at"),
   finishedAt: text("finished_at"),
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [
+  index("idx_deployments_project_id").on(table.projectId),
+]);
 
 // domains table
 export const domains = sqliteTable("domains", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull().references(() => projects.id),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   domain: text("domain").notNull().unique(),
   isPrimary: integer("is_primary").default(0),
   sslStatus: text("ssl_status").default("pending"), // pending | active | error
   sslCertExp: text("ssl_cert_exp"),
   verifiedAt: text("verified_at"),
   createdAt: text("created_at").notNull(),
-});
+  deletedAt: text("deleted_at"),                  // soft delete
+}, (table) => [
+  index("idx_domains_project_id").on(table.projectId),
+]);
 
 // env_vars table
 export const envVars = sqliteTable("env_vars", {
   id: text("id").primaryKey(),
-  projectId: text("project_id").notNull().references(() => projects.id),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   key: text("key").notNull(),
   valueEnc: text("value_enc").notNull(),          // AES-256-GCM encrypted + base64
   iv: text("iv").notNull(),                       // base64 IV
@@ -76,12 +86,13 @@ export const envVars = sqliteTable("env_vars", {
   updatedAt: text("updated_at").notNull(),
 }, (table) => [
   uniqueIndex("env_vars_project_key_idx").on(table.projectId, table.key),
+  index("idx_env_vars_project_id").on(table.projectId),
 ]);
 
 // build_jobs table
 export const buildJobs = sqliteTable("build_jobs", {
   id: text("id").primaryKey(),
-  deploymentId: text("deployment_id").notNull().references(() => deployments.id),
+  deploymentId: text("deployment_id").notNull().references(() => deployments.id, { onDelete: "cascade" }),
   type: text("type").notNull(),                   // build | deploy | stop | restart
   status: text("status").default("pending").notNull(), // pending | running | done | failed
   payload: text("payload").notNull(),             // JSON
@@ -91,7 +102,9 @@ export const buildJobs = sqliteTable("build_jobs", {
   createdAt: text("created_at").notNull(),
   startedAt: text("started_at"),
   finishedAt: text("finished_at"),
-});
+}, (table) => [
+  index("idx_build_jobs_status_type").on(table.status, table.type),
+]);
 
 // metrics table (ring buffer, 7-day retention)
 export const metrics = sqliteTable("metrics", {
@@ -112,10 +125,20 @@ export const metrics = sqliteTable("metrics", {
 // api_tokens table
 export const apiTokens = sqliteTable("api_tokens", {
   id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => users.id),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   tokenHash: text("token_hash").notNull().unique(), // SHA-256 of token
   lastUsedAt: text("last_used_at"),
   expiresAt: text("expires_at"),
+  createdAt: text("created_at").notNull(),
+});
+
+// idempotency_keys table — stores response snapshots for mutating requests
+export const idempotencyKeys = sqliteTable("idempotency_keys", {
+  key: text("key").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  responseHash: text("response_hash").notNull(),
+  statusCode: integer("status_code").notNull(),
+  body: text("body").notNull(),
   createdAt: text("created_at").notNull(),
 });
