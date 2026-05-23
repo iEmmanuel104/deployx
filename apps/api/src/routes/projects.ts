@@ -12,6 +12,7 @@ import {
   createDeploymentAndEnqueueBuild,
   BuildAlreadyInProgressError,
 } from "../queue/helpers.js";
+import { withIdempotency } from "../utils/idempotency.js";
 
 const CreateProjectBody = z.object({
   name: z.string().min(1),
@@ -178,6 +179,17 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = request.params as z.infer<typeof IdParam>;
       const project = await getOwnedProject(fastify.db, request.user.sub, id);
 
+      // A1: Refuse if a build is already in flight for this project
+      if (project.status === "building") {
+        return reply.status(409).send({
+          ok: false,
+          error: {
+            code: "PROJECT_BUSY",
+            message: "Project is currently building — wait for it to finish",
+          },
+        });
+      }
+
       // Verify project has gitRepo if sourceType is "git"
       if (project.sourceType === "git" && !project.gitRepo) {
         const err = new Error(
@@ -187,45 +199,50 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      const imageTag = `deployx/${project.slug}:deploy-${ulid()}`;
+      return withIdempotency(fastify.db, request, reply, async () => {
+        const imageTag = `deployx/${project.slug}:deploy-${ulid()}`;
 
-      try {
-        const { deploymentId, jobId } = await createDeploymentAndEnqueueBuild(
-          fastify.db,
-          {
-            projectId: id,
-            trigger: "manual",
-            buildPayload: {
+        try {
+          const { deploymentId, jobId } = await createDeploymentAndEnqueueBuild(
+            fastify.db,
+            {
               projectId: id,
-              sourceDir: project.gitRepo ?? "",
-              imageTag,
-              buildType:
-                (project.buildType as "nixpacks" | "railpack" | "dockerfile") ??
-                "nixpacks",
-              buildCmd: project.buildCmd ?? null,
-              startCmd: project.startCmd ?? null,
-              port: project.port ?? 3000,
-            },
-          },
-        );
-
-        return reply.status(202).send(success({ deploymentId, jobId }));
-      } catch (err) {
-        if (err instanceof BuildAlreadyInProgressError) {
-          return reply.status(409).send({
-            ok: false,
-            error: {
-              code: err.code,
-              message: err.message,
-              details: {
-                existingJobId: err.existingJobId,
-                existingDeploymentId: err.existingDeploymentId,
+              trigger: "manual",
+              buildPayload: {
+                projectId: id,
+                sourceDir: project.gitRepo ?? "",
+                imageTag,
+                buildType:
+                  (project.buildType as "nixpacks" | "railpack" | "dockerfile") ??
+                  "nixpacks",
+                buildCmd: project.buildCmd ?? null,
+                startCmd: project.startCmd ?? null,
+                port: project.port ?? 3000,
               },
             },
-          });
+          );
+
+          return { statusCode: 202, body: success({ deploymentId, jobId }) };
+        } catch (err) {
+          if (err instanceof BuildAlreadyInProgressError) {
+            return {
+              statusCode: 409,
+              body: {
+                ok: false,
+                error: {
+                  code: err.code,
+                  message: err.message,
+                  details: {
+                    existingJobId: err.existingJobId,
+                    existingDeploymentId: err.existingDeploymentId,
+                  },
+                },
+              },
+            };
+          }
+          throw err;
         }
-        throw err;
-      }
+      });
     },
   });
 
@@ -237,6 +254,28 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = request.params as z.infer<typeof IdParam>;
       const project = await getOwnedProject(fastify.db, request.user.sub, id);
 
+      // A1: Refuse to stop when already stopped
+      if (project.status === "stopped") {
+        return reply.status(409).send({
+          ok: false,
+          error: {
+            code: "PROJECT_BUSY",
+            message: "Project is already stopped",
+          },
+        });
+      }
+
+      // A1: Refuse to stop during a build
+      if (project.status === "building") {
+        return reply.status(409).send({
+          ok: false,
+          error: {
+            code: "PROJECT_BUSY",
+            message: "Project is currently building — wait for it to finish",
+          },
+        });
+      }
+
       if (!project.containerId) {
         const err = new Error(
           "Project is not running — no container to stop",
@@ -245,38 +284,39 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      // Create a deployment record for tracking the stop operation
-      const deploymentId = ulid();
-      const now = new Date().toISOString();
+      return withIdempotency(fastify.db, request, reply, async () => {
+        const deploymentId = ulid();
+        const now = new Date().toISOString();
 
-      const latestDeployments = await fastify.db
-        .select({ version: deployments.version })
-        .from(deployments)
-        .where(eq(deployments.projectId, id))
-        .orderBy(desc(deployments.version))
-        .limit(1);
+        const latestDeployments = await fastify.db
+          .select({ version: deployments.version })
+          .from(deployments)
+          .where(eq(deployments.projectId, id))
+          .orderBy(desc(deployments.version))
+          .limit(1);
 
-      const version = (latestDeployments[0]?.version ?? 0) + 1;
+        const version = (latestDeployments[0]?.version ?? 0) + 1;
 
-      await fastify.db.insert(deployments).values({
-        id: deploymentId,
-        projectId: id,
-        version,
-        trigger: "manual",
-        status: "queued",
-        createdAt: now,
-      });
-
-      const jobId = await enqueueJob(fastify.db, {
-        deploymentId,
-        type: "stop",
-        payload: {
+        await fastify.db.insert(deployments).values({
+          id: deploymentId,
           projectId: id,
-          containerId: project.containerId,
-        },
-      });
+          version,
+          trigger: "manual",
+          status: "queued",
+          createdAt: now,
+        });
 
-      return reply.status(202).send(success({ deploymentId, jobId }));
+        const jobId = await enqueueJob(fastify.db, {
+          deploymentId,
+          type: "stop",
+          payload: {
+            projectId: id,
+            containerId: project.containerId!,
+          },
+        });
+
+        return { statusCode: 202, body: success({ deploymentId, jobId }) };
+      });
     },
   });
 
@@ -288,6 +328,17 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
       const { id } = request.params as z.infer<typeof IdParam>;
       const project = await getOwnedProject(fastify.db, request.user.sub, id);
 
+      // A1: Restart requires the project to currently be running
+      if (project.status !== "running") {
+        return reply.status(409).send({
+          ok: false,
+          error: {
+            code: "PROJECT_BUSY",
+            message: `Cannot restart — project status is "${project.status}" (must be "running")`,
+          },
+        });
+      }
+
       if (!project.containerId) {
         const err = new Error(
           "Project is not running — no container to restart",
@@ -296,38 +347,39 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      // Create a deployment record for tracking the restart operation
-      const deploymentId = ulid();
-      const now = new Date().toISOString();
+      return withIdempotency(fastify.db, request, reply, async () => {
+        const deploymentId = ulid();
+        const now = new Date().toISOString();
 
-      const latestDeployments = await fastify.db
-        .select({ version: deployments.version })
-        .from(deployments)
-        .where(eq(deployments.projectId, id))
-        .orderBy(desc(deployments.version))
-        .limit(1);
+        const latestDeployments = await fastify.db
+          .select({ version: deployments.version })
+          .from(deployments)
+          .where(eq(deployments.projectId, id))
+          .orderBy(desc(deployments.version))
+          .limit(1);
 
-      const version = (latestDeployments[0]?.version ?? 0) + 1;
+        const version = (latestDeployments[0]?.version ?? 0) + 1;
 
-      await fastify.db.insert(deployments).values({
-        id: deploymentId,
-        projectId: id,
-        version,
-        trigger: "manual",
-        status: "queued",
-        createdAt: now,
-      });
-
-      const jobId = await enqueueJob(fastify.db, {
-        deploymentId,
-        type: "restart",
-        payload: {
+        await fastify.db.insert(deployments).values({
+          id: deploymentId,
           projectId: id,
-          containerId: project.containerId,
-        },
-      });
+          version,
+          trigger: "manual",
+          status: "queued",
+          createdAt: now,
+        });
 
-      return reply.status(202).send(success({ deploymentId, jobId }));
+        const jobId = await enqueueJob(fastify.db, {
+          deploymentId,
+          type: "restart",
+          payload: {
+            projectId: id,
+            containerId: project.containerId!,
+          },
+        });
+
+        return { statusCode: 202, body: success({ deploymentId, jobId }) };
+      });
     },
   });
 

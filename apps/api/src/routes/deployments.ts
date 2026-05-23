@@ -7,6 +7,7 @@ import { requireAuth } from "../plugins/auth.js";
 import { success } from "../utils/response.js";
 import { getOwnedProject } from "../utils/ownership.js";
 import { enqueueJob } from "../queue/helpers.js";
+import { withIdempotency } from "../utils/idempotency.js";
 
 const ProjectIdParam = z.object({
   projectId: z.string().min(1),
@@ -116,45 +117,47 @@ export async function deploymentRoutes(
         throw err;
       }
 
-      // Get next version number
-      const latestDeployments = await fastify.db
-        .select({ version: deployments.version })
-        .from(deployments)
-        .where(eq(deployments.projectId, projectId))
-        .orderBy(desc(deployments.version))
-        .limit(1);
+      return withIdempotency(fastify.db, request, reply, async () => {
+        // Get next version number
+        const latestDeployments = await fastify.db
+          .select({ version: deployments.version })
+          .from(deployments)
+          .where(eq(deployments.projectId, projectId))
+          .orderBy(desc(deployments.version))
+          .limit(1);
 
-      const version = (latestDeployments[0]?.version ?? 0) + 1;
+        const version = (latestDeployments[0]?.version ?? 0) + 1;
 
-      // Create new deployment with the existing imageTag
-      const deploymentId = ulid();
-      const now = new Date().toISOString();
+        // Create new deployment with the existing imageTag
+        const deploymentId = ulid();
+        const now = new Date().toISOString();
 
-      await fastify.db.insert(deployments).values({
-        id: deploymentId,
-        projectId,
-        version,
-        trigger: "manual",
-        imageTag: targetDeployment.imageTag,
-        status: "queued",
-        createdAt: now,
-      });
-
-      // Enqueue a deploy job (skip build, use existing image)
-      const jobId = await enqueueJob(fastify.db, {
-        deploymentId,
-        type: "deploy",
-        payload: {
+        await fastify.db.insert(deployments).values({
+          id: deploymentId,
           projectId,
-          deploymentId,
+          version,
+          trigger: "manual",
           imageTag: targetDeployment.imageTag,
-          slug: project.slug,
-          port: project.port ?? 3000,
-          platformDomain: process.env["PLATFORM_DOMAIN"],
-        },
-      });
+          status: "queued",
+          createdAt: now,
+        });
 
-      return reply.status(202).send(success({ deploymentId, jobId }));
+        // Enqueue a deploy job (skip build, use existing image)
+        const jobId = await enqueueJob(fastify.db, {
+          deploymentId,
+          type: "deploy",
+          payload: {
+            projectId,
+            deploymentId,
+            imageTag: targetDeployment.imageTag!,
+            slug: project.slug,
+            port: project.port ?? 3000,
+            platformDomain: process.env["PLATFORM_DOMAIN"],
+          },
+        });
+
+        return { statusCode: 202, body: success({ deploymentId, jobId }) };
+      });
     },
   });
 }

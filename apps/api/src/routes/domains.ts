@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { ulid } from "ulidx";
 import { domains } from "@deployx/db";
 import { DOMAIN_REGEX } from "@deployx/types";
@@ -30,10 +30,16 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
       const params = request.params as z.infer<typeof ProjectIdParam>;
       await getOwnedProject(fastify.db, request.user.sub, params.projectId);
 
+      // A5: filter out soft-deleted domains
       const rows = await fastify.db
         .select()
         .from(domains)
-        .where(eq(domains.projectId, params.projectId));
+        .where(
+          and(
+            eq(domains.projectId, params.projectId),
+            isNull(domains.deletedAt),
+          ),
+        );
 
       return reply.send(success(rows));
     },
@@ -48,11 +54,11 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
       const body = request.body as z.infer<typeof AddDomainBody>;
       await getOwnedProject(fastify.db, request.user.sub, params.projectId);
 
-      // Check global uniqueness
+      // A5: only collide against active (non-deleted) domains
       const [existing] = await fastify.db
         .select({ id: domains.id })
         .from(domains)
-        .where(eq(domains.domain, body.domain))
+        .where(and(eq(domains.domain, body.domain), isNull(domains.deletedAt)))
         .limit(1);
 
       if (existing) {
@@ -72,6 +78,7 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
         sslCertExp: null,
         verifiedAt: null,
         createdAt: now,
+        deletedAt: null,
       };
 
       await fastify.db.insert(domains).values(newDomain);
@@ -80,7 +87,7 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
     },
   });
 
-  // Remove domain
+  // Remove domain (A5: soft-delete by setting deletedAt instead of DELETE)
   fastify.delete("/api/v1/projects/:projectId/domains/:id", {
     schema: { params: DomainParams },
     preHandler: [requireAuth],
@@ -91,7 +98,13 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
       const [domainRow] = await fastify.db
         .select({ id: domains.id })
         .from(domains)
-        .where(and(eq(domains.id, params.id), eq(domains.projectId, params.projectId)))
+        .where(
+          and(
+            eq(domains.id, params.id),
+            eq(domains.projectId, params.projectId),
+            isNull(domains.deletedAt),
+          ),
+        )
         .limit(1);
 
       if (!domainRow) {
@@ -100,8 +113,10 @@ export async function domainRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
+      const now = new Date().toISOString();
       await fastify.db
-        .delete(domains)
+        .update(domains)
+        .set({ deletedAt: now })
         .where(eq(domains.id, params.id));
 
       return reply.send(success({ id: params.id, deleted: true }));

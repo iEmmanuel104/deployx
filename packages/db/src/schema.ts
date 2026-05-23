@@ -59,11 +59,12 @@ export const deployments = sqliteTable("deployments", {
   index("idx_deployments_project_id").on(table.projectId),
 ]);
 
-// domains table
+// domains table — uniqueness on `domain` is enforced at the route layer with
+// an `isNull(deletedAt)` filter so soft-deleted hostnames can be re-registered.
 export const domains = sqliteTable("domains", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  domain: text("domain").notNull().unique(),
+  domain: text("domain").notNull(),
   isPrimary: integer("is_primary").default(0),
   sslStatus: text("ssl_status").default("pending"), // pending | active | error
   sslCertExp: text("ssl_cert_exp"),
@@ -133,12 +134,15 @@ export const apiTokens = sqliteTable("api_tokens", {
   createdAt: text("created_at").notNull(),
 });
 
-// idempotency_keys table — stores response snapshots for mutating requests
+// idempotency_keys table — caches responses for Idempotency-Key header on unsafe POSTs
 export const idempotencyKeys = sqliteTable("idempotency_keys", {
   key: text("key").primaryKey(),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  responseHash: text("response_hash").notNull(),
+  responseHash: text("response_hash").notNull(),    // sha256 of method+path+body
   statusCode: integer("status_code").notNull(),
-  body: text("body").notNull(),
+  body: text("body").notNull(),                     // cached response JSON
   createdAt: text("created_at").notNull(),
-});
+}, (table) => [
+  index("idx_idempotency_user_key").on(table.userId, table.key),
+  index("idx_idempotency_created").on(table.createdAt),
+]);
