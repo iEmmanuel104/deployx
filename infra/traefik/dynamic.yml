@@ -1,21 +1,62 @@
 http:
   middlewares:
+    # ── Compression ───────────────────────────────────────────────────────────
+    gzip-compress:
+      compress: {}
+
+    # ── Security headers (HSTS + clickjacking + sniff + referrer + CSP) ──────
+    secure-headers:
+      headers:
+        browserXssFilter: true
+        contentTypeNosniff: true
+        # HSTS — 1 year, include subdomains
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        # Clickjacking
+        customFrameOptionsValue: "SAMEORIGIN"
+        # Referrer
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # Strip identifying response headers
+        customResponseHeaders:
+          X-Powered-By: ""
+          Server: ""
+        # CSP — permissive enough for the SvelteKit dashboard inline runtime,
+        # locked down on cross-origin sources. Per-app routers can override.
+        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'self'"
+
+    # Backwards-compatible alias for any router still referencing the legacy name.
     security-headers:
       headers:
         browserXssFilter: true
         contentTypeNosniff: true
-        frameDeny: true
+        stsSeconds: 31536000
         stsIncludeSubdomains: true
         stsPreload: true
-        stsSeconds: 31536000
-        customFrameOptionsValue: "DENY"
+        customFrameOptionsValue: "SAMEORIGIN"
+        referrerPolicy: "strict-origin-when-cross-origin"
         customResponseHeaders:
           X-Powered-By: ""
           Server: ""
-        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'"
+        contentSecurityPolicy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' wss: https:; frame-ancestors 'self'"
 
+    # ── Per-IP rate limit (100 req/s sustained, 200 burst) ───────────────────
     rate-limit:
       rateLimit:
         average: 100
         burst: 200
         period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    # ── Default chain — apply to every router via Docker label ───────────────
+    # Usage on a docker-compose service:
+    #   labels:
+    #     - "traefik.http.routers.<name>.middlewares=default-chain@file"
+    default-chain:
+      chain:
+        middlewares:
+          - gzip-compress
+          - secure-headers
+          - rate-limit
