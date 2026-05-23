@@ -22,6 +22,7 @@ log_info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
 log_ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 log_step()  { echo -e "\n${CYAN}──── $* ────${NC}"; }
 
 # ── Root check ────────────────────────────────────────────────────────────────
@@ -56,6 +57,22 @@ fi
 
 log_ok "Detected ${PRETTY_NAME}"
 
+# ── Early PLATFORM_DOMAIN validation (O2) ────────────────────────────────────
+# If the operator passed PLATFORM_DOMAIN via env, validate it BEFORE any
+# destructive system change. We accept either a valid RFC-1123 hostname OR a
+# bare IPv4 address (some users install against a raw VPS IP first, then add
+# DNS later). Empty PLATFORM_DOMAIN is allowed here — it triggers an
+# interactive prompt later.
+if [[ -n "${PLATFORM_DOMAIN:-}" ]]; then
+  if [[ "$PLATFORM_DOMAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    log_ok "PLATFORM_DOMAIN '$PLATFORM_DOMAIN' is a bare IPv4 — accepting"
+  elif ! [[ "$PLATFORM_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]]; then
+    log_err "PLATFORM_DOMAIN '$PLATFORM_DOMAIN' is not a valid hostname"
+    log_err "Must match RFC-1123: lowercase letters, digits, hyphens; dots between labels."
+    exit 1
+  fi
+fi
+
 # ── Install essential packages (including git) ───────────────────────────────
 log_step "Installing essential packages"
 
@@ -67,10 +84,11 @@ log_ok "Essential packages installed"
 log_step "Setting up DeployX source code"
 
 if [[ -d /opt/deployx/.git ]]; then
-  log_info "DeployX already installed, pulling latest..."
+  log_info "DeployX already installed, hard-resetting to origin/main (O1 idempotency)..."
   cd /opt/deployx
-  git pull origin main
-  log_ok "Source code updated"
+  git fetch origin
+  git reset --hard origin/main
+  log_ok "Source code updated to origin/main"
 else
   log_info "Cloning DeployX repository..."
   # Ensure /opt/deployx exists but is empty (or absent) before cloning
@@ -121,16 +139,20 @@ log_step "Creating Docker network"
 docker network create proxy-network 2>/dev/null || true
 log_ok "proxy-network ready"
 
-# ── Configure UFW + Docker firewall rules ─────────────────────────────────────
-log_step "Configuring firewall (UFW)"
+# ── Host hardening: UFW + SSH + fail2ban + unattended-upgrades (O3) ──────────
+log_step "Host hardening (UFW + SSH + fail2ban + unattended-upgrades)"
 
+# Install hardening packages (idempotent — apt is a no-op if already installed)
+apt-get install -y -qq ufw fail2ban unattended-upgrades
+
+# UFW: default deny inbound, allow only SSH/HTTP/HTTPS
 if command -v ufw &>/dev/null; then
-  ufw --force enable
-
-  # Allow SSH, HTTP, HTTPS
-  ufw allow 22/tcp   comment "SSH"
-  ufw allow 80/tcp   comment "HTTP"
-  ufw allow 443/tcp  comment "HTTPS"
+  ufw --force default deny incoming
+  ufw --force default allow outgoing
+  ufw allow 22/tcp   comment "SSH" >/dev/null
+  ufw allow 80/tcp   comment "HTTP" >/dev/null
+  ufw allow 443/tcp  comment "HTTPS" >/dev/null
+  ufw --force enable >/dev/null
 
   # Docker-USER chain rules (PRD 22.2.1)
   # Block direct container access from external networks
@@ -139,10 +161,62 @@ if command -v ufw &>/dev/null; then
   iptables -I DOCKER-USER -i eth0 -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
   iptables -I DOCKER-USER -i eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
 
-  log_ok "Firewall configured"
+  log_ok "UFW: default-deny incoming, 22/80/443 allowed"
 else
-  log_warn "UFW not found — skipping firewall configuration"
+  log_warn "UFW not available after install attempt — skipping firewall configuration"
 fi
+
+# SSH hardening — only proceed if we will not lock the operator out
+SSH_AUTH_KEYS_FILE="/root/.ssh/authorized_keys"
+if [[ -s "$SSH_AUTH_KEYS_FILE" ]]; then
+  log_info "Found authorized_keys for root — safe to disable password auth"
+  mkdir -p /etc/ssh/sshd_config.d
+  cat > /etc/ssh/sshd_config.d/99-deployx-hardening.conf <<'SSHEOF'
+# DeployX SSH hardening (written by installer)
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+SSHEOF
+  chmod 0644 /etc/ssh/sshd_config.d/99-deployx-hardening.conf
+
+  # Cloud-init's drop-in often re-enables password auth — override it idempotently
+  if [[ -f /etc/ssh/sshd_config.d/50-cloud-init.conf ]]; then
+    cat > /etc/ssh/sshd_config.d/50-cloud-init.conf <<'CIEOF'
+# Overridden by DeployX installer to keep password auth disabled
+PasswordAuthentication no
+CIEOF
+  fi
+
+  if sshd -t 2>/dev/null; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+    log_ok "SSH hardened (key-only auth, root prohibit-password)"
+  else
+    log_warn "sshd -t failed after writing hardening config — NOT reloading sshd"
+    log_warn "Inspect /etc/ssh/sshd_config.d/ manually before reloading"
+  fi
+else
+  echo ""
+  log_warn "╔══════════════════════════════════════════════════════════════════╗"
+  log_warn "║  SSH HARDENING SKIPPED — no SSH key found in $SSH_AUTH_KEYS_FILE"
+  log_warn "║                                                                  "
+  log_warn "║  Disabling password auth now would lock you out of this VPS.    "
+  log_warn "║  To complete hardening:                                          "
+  log_warn "║    1. ssh-copy-id root@<this-vps-ip>   (from your workstation)  "
+  log_warn "║    2. Re-run this installer                                      "
+  log_warn "║                                                                  "
+  log_warn "║  Password auth remains ENABLED until you do this.                "
+  log_warn "╚══════════════════════════════════════════════════════════════════╝"
+  echo ""
+fi
+
+# fail2ban — protect SSH against brute force (default jail.d/sshd config is fine)
+systemctl enable --now fail2ban 2>/dev/null && log_ok "fail2ban enabled" || \
+  log_warn "Could not enable fail2ban — check 'systemctl status fail2ban'"
+
+# unattended-upgrades — apply security patches automatically
+systemctl enable --now unattended-upgrades 2>/dev/null && log_ok "unattended-upgrades enabled" || \
+  log_warn "Could not enable unattended-upgrades"
 
 # ── Create platform directories ───────────────────────────────────────────────
 log_step "Creating platform directories"
@@ -472,10 +546,33 @@ if command -v litestream &>/dev/null; then
     log_warn "Litestream is installed but NOT yet enabled."
     log_warn "Edit /etc/litestream.yml with your S3-compatible bucket details, then:"
     log_warn "  systemctl enable --now litestream"
+    log_warn "Litestream NOT active until you fill /etc/litestream.yml"
   else
     systemctl enable --now litestream 2>/dev/null || \
       log_warn "Could not enable litestream service automatically — run 'systemctl enable --now litestream'"
-    log_ok "Litestream service enabled"
+    log_ok "Litestream service enabled — polling for first snapshot (O4)"
+
+    # Poll for up to 60s expecting at least one snapshot from the configured replica.
+    LS_DB_PATH="/data/platform.db"
+    [[ -f "/opt/deployx/data/platform.db" ]] && LS_DB_PATH="/opt/deployx/data/platform.db"
+
+    LS_OK=false
+    for i in $(seq 1 30); do
+      if litestream snapshots -config /etc/litestream.yml "$LS_DB_PATH" 2>/dev/null | grep -qE '^[a-z0-9-]+\s'; then
+        LS_OK=true
+        break
+      fi
+      sleep 2
+    done
+
+    if [[ "$LS_OK" == "true" ]]; then
+      log_ok "Litestream snapshot confirmed — replication is live"
+    else
+      log_err "Litestream creds appear filled but no snapshot appeared in 60s."
+      log_err "Inspect: journalctl -u litestream -n 100"
+      log_err "Inspect: litestream snapshots -config /etc/litestream.yml $LS_DB_PATH"
+      exit 1
+    fi
   fi
 fi
 

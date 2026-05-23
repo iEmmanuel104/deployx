@@ -334,6 +334,12 @@ DeployX is MVP-stage. The following items are tracked and being addressed:
 | ✅ | **API `.env` auto-loading in dev** | `apps/api/src/index.ts` imports `dotenv/config` at the top — `pnpm dev` reads `.env` directly. Production (systemd-sourced `/etc/deployx/.env`) unaffected. |
 | 🚧 | **Webhook triggers** | `DeploymentTrigger.git_push` exists in the schema but no webhook receiver is wired up. Use the CLI or dashboard "Deploy" button for now. |
 | 🚧 | **Custom Dockerfile builds** | Schema supports `buildType=dockerfile` but the builder currently only handles Nixpacks. |
+| ✅ | **Installer host hardening** | `install.sh` enforces UFW default-deny + 22/80/443 allow, SSH key-only auth via drop-in at `/etc/ssh/sshd_config.d/99-deployx-hardening.conf` (with a safety guard that refuses to disable password auth when `/root/.ssh/authorized_keys` is empty), `fail2ban`, and `unattended-upgrades`. |
+| ✅ | **Installer idempotency** | `install.sh` is safe to re-run end-to-end: `git fetch && git reset --hard origin/main` for source updates, docker/user/dir/SSH creation are all idempotent, and `PLATFORM_DOMAIN` is RFC-1123-validated before any destructive step. |
+| ✅ | **Litestream snapshot verification** | After enabling the systemd unit, the installer polls `litestream snapshots` for up to 60s and fails loud if the creds are filled but no snapshot ever lands. |
+| ✅ | **Traefik default middleware chain** | `infra/traefik/dynamic.yml` ships a `default-chain@file` bundling gzip compression, security headers (HSTS 1y, nosniff, SAMEORIGIN, strict-origin-when-cross-origin, CSP), and per-IP rate limiting (100 req/s × 200 burst). Apply via `traefik.http.routers.<name>.middlewares=default-chain@file`. |
+| 🚧 | **OpenAPI / Swagger UI at `/api/docs`** | Patch ready in [`docs/openapi-patch.md`](docs/openapi-patch.md). Adds `@fastify/swagger` + `@fastify/swagger-ui` to `apps/api/src/index.ts` using the existing `fastify-type-provider-zod` schema transform. |
+| ✅ | **Restore runbook** | Step-by-step DR procedure (full VPS rebuild + in-place corrupt-DB recovery + point-in-time forensics) at [`docs/RESTORE.md`](docs/RESTORE.md). |
 | ✅ | Nixpacks builds | Working — auto-detects Python, Node, Go, Rust, Ruby. |
 | ✅ | Traefik + Let's Encrypt | Working — automatic cert issuance and renewal. |
 | ✅ | Auth (register/login/JWT) | Working. |
