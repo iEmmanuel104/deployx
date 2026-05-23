@@ -9,12 +9,14 @@
     "lint": "eslint src/",
     "dev": "vite dev",
     "preview": "vite preview",
-    "start": "node build/index.js"
+    "start": "node build/index.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@deployx/types": "workspace:*"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.0",
     "@sveltejs/adapter-node": "^5.2.0",
     "@sveltejs/kit": "^2.21.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
