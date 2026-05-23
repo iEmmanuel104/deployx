@@ -80,19 +80,28 @@ export function createApiClient(
       headers["Authorization"] = `Bearer ${token}`;
     }
 
+    // Fastify with @fastify/json content-type parser rejects an empty body
+    // when Content-Type: application/json is set. Always send a JSON-encoded
+    // body so POSTs without an explicit payload still parse cleanly.
+    const serializedBody =
+      method === "GET" || method === "HEAD"
+        ? undefined
+        : JSON.stringify(body ?? {});
+
     const res = await fetch(`${baseUrl}${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: serializedBody,
       credentials: "include",
     });
 
-    if (res.status === 401) {
-      // Redirect to login on unauthorized
+    if (res.status === 401 || res.status === 403) {
       if (typeof window !== "undefined") {
         window.location.href = "/login";
       }
-      return { ok: false, error: { code: "UNAUTHORIZED", message: "Unauthorized" } };
+      const code = res.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN";
+      const message = res.status === 401 ? "Unauthorized" : "Forbidden";
+      return { ok: false, error: { code, message } };
     }
 
     return (await res.json()) as ApiResponse<T>;
@@ -138,6 +147,12 @@ export function createApiClient(
     },
     restart(projectId: string) {
       return request<void>("POST", `/api/v1/projects/${projectId}/restart`);
+    },
+    rollback(projectId: string, version: number) {
+      return request<Deployment>(
+        "POST",
+        `/api/v1/projects/${projectId}/rollback/${version}`,
+      );
     },
 
     // Domains

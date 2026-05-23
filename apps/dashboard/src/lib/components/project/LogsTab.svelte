@@ -9,11 +9,19 @@
   let error = $state("");
   let connected = $state(false);
   let autoScroll = $state(true);
+  let reconnecting = $state(false);
+  let retryCount = $state(0);
+  let nextRetryMs = $state(0);
+  let givenUp = $state(false);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let controller: AbortController | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let logBox: HTMLDivElement | null = $state(null);
+
   const MAX_LINES = 5000;
+  const MAX_RETRIES = 10;
+  const BASE_DELAY_MS = 1000;
+  const MAX_DELAY_MS = 30_000;
 
   function appendLine(line: string): void {
     lines = [...lines.slice(-MAX_LINES + 1), line];
@@ -24,9 +32,39 @@
     if (logBox) logBox.scrollTop = logBox.scrollHeight;
   }
 
-  async function startStream(): Promise<void> {
+  function clearReconnectTimer(): void {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  // Exponential backoff: 1s, 2s, 4s, 8s, 16s, then capped at 30s.
+  function backoffDelay(attempt: number): number {
+    return Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+  }
+
+  function scheduleReconnect(): void {
+    if (givenUp) return;
+    if (retryCount >= MAX_RETRIES) {
+      givenUp = true;
+      reconnecting = false;
+      error = "Disconnected — refresh to retry.";
+      return;
+    }
+    const delay = backoffDelay(retryCount);
+    nextRetryMs = delay;
+    reconnecting = true;
+    retryCount += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect();
+    }, delay);
+  }
+
+  async function connect(): Promise<void> {
+    clearReconnectTimer();
     error = "";
-    lines = [];
     connected = false;
     controller = new AbortController();
 
@@ -34,6 +72,8 @@
     const params = new URLSearchParams();
     if (following) params.set("follow", "1");
     params.set("tail", "200");
+
+    let receivedData = false;
 
     try {
       const res = await fetch(
@@ -49,9 +89,12 @@
 
       if (!res.ok || !res.body) {
         error = `Stream failed (${res.status}): ${res.statusText}`;
+        scheduleReconnect();
         return;
       }
       connected = true;
+      reconnecting = false;
+      nextRetryMs = 0;
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -64,35 +107,61 @@
         while ((nl = buf.indexOf("\n")) >= 0) {
           const frame = buf.slice(0, nl);
           buf = buf.slice(nl + 1);
-          if (frame.startsWith("data: ")) appendLine(frame.slice(6));
+          if (frame.startsWith("data: ")) {
+            appendLine(frame.slice(6));
+            receivedData = true;
+          }
         }
       }
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
-        error = (err as Error).message ?? "Connection error";
-      }
-    } finally {
+      // Stream ended cleanly. If we received data, reset the retry budget
+      // before reconnecting — otherwise treat as a failed attempt.
+      if (receivedData) retryCount = 0;
       connected = false;
+      if (following) scheduleReconnect();
+    } catch (err) {
+      const e = err as Error;
+      if (e.name === "AbortError") {
+        connected = false;
+        return;
+      }
+      error = e.message ?? "Connection error";
+      connected = false;
+      scheduleReconnect();
     }
   }
 
+  function start(): void {
+    givenUp = false;
+    retryCount = 0;
+    nextRetryMs = 0;
+    lines = [];
+    void connect();
+  }
+
   function stopStream(): void {
+    clearReconnectTimer();
     controller?.abort();
     controller = null;
+    reconnecting = false;
   }
 
   function toggleFollow(): void {
     following = !following;
     stopStream();
-    startStream();
+    start();
   }
 
   function clearLogs(): void {
     lines = [];
   }
 
+  function manualRetry(): void {
+    stopStream();
+    start();
+  }
+
   onMount(() => {
-    startStream();
+    start();
   });
 
   onDestroy(() => {
@@ -123,10 +192,24 @@
     >
       Clear
     </button>
+    {#if givenUp}
+      <button
+        onclick={manualRetry}
+        class="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 transition-colors hover:bg-amber-500/20"
+      >
+        Retry
+      </button>
+    {/if}
     <span class="text-xs text-slate-400 ml-2">
       {#if connected}
         <span class="inline-block h-2 w-2 rounded-full bg-emerald-500 mr-1.5"></span>
         Streaming
+      {:else if reconnecting}
+        <span class="inline-block h-2 w-2 rounded-full bg-amber-400 mr-1.5"></span>
+        Reconnecting ({retryCount}/{MAX_RETRIES}) — next in {Math.round(nextRetryMs / 1000)}s
+      {:else if givenUp}
+        <span class="inline-block h-2 w-2 rounded-full bg-red-500 mr-1.5"></span>
+        Disconnected
       {:else if error}
         <span class="inline-block h-2 w-2 rounded-full bg-red-500 mr-1.5"></span>
         Error

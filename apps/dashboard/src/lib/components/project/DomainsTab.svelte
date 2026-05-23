@@ -3,7 +3,7 @@
   import Button from "$lib/components/ui/Button.svelte";
   import Modal from "$lib/components/ui/Modal.svelte";
   import EmptyState from "$lib/components/ui/EmptyState.svelte";
-  import { getToken } from "$lib/auth.svelte.js";
+  import { api } from "$lib/api-client.js";
   import type { Domain } from "$lib/api.js";
 
   let {
@@ -21,30 +21,21 @@
   let deleteModalOpen = $state(false);
   let domainToDelete = $state<Domain | null>(null);
   let deleting = $state(false);
+  let deleteError = $state<string | null>(null);
 
   async function handleAddDomain(e: Event) {
     e.preventDefault();
-    if (!newDomain.trim()) return;
+    if (!newDomain.trim() || adding) return;
 
     addError = null;
     adding = true;
     try {
-      const token = getToken();
-      const res = await fetch(`/api/v1/projects/${projectId}/domains`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        credentials: "include",
-        body: JSON.stringify({ domain: newDomain.trim() }),
-      });
-      const data = await res.json();
-      if (data.ok) {
-        domains = [...domains, data.data];
+      const res = await api.addDomain(projectId, newDomain.trim());
+      if (res.ok && res.data) {
+        domains = [...domains, res.data];
         newDomain = "";
       } else {
-        addError = data.error?.message ?? "Failed to add domain";
+        addError = res.error?.message ?? "Failed to add domain";
       }
     } catch {
       addError = "Failed to add domain. Please try again.";
@@ -55,33 +46,28 @@
 
   function confirmDelete(domain: Domain) {
     domainToDelete = domain;
+    deleteError = null;
     deleteModalOpen = true;
   }
 
   async function handleDelete() {
-    if (!domainToDelete) return;
+    if (!domainToDelete || deleting) return;
 
     deleting = true;
+    deleteError = null;
     try {
-      const token = getToken();
-      const res = await fetch(`/api/v1/projects/${projectId}/domains/${domainToDelete.id}`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (data.ok) {
+      const res = await api.removeDomain(projectId, domainToDelete.id);
+      if (res.ok) {
         domains = domains.filter((d) => d.id !== domainToDelete!.id);
+        deleteModalOpen = false;
+        domainToDelete = null;
+      } else {
+        deleteError = res.error?.message ?? "Failed to remove domain";
       }
     } catch {
-      // Silently fail - user can retry
+      deleteError = "Failed to remove domain. Please try again.";
     } finally {
       deleting = false;
-      deleteModalOpen = false;
-      domainToDelete = null;
     }
   }
 </script>
@@ -93,10 +79,11 @@
       type="text"
       bind:value={newDomain}
       placeholder="example.com"
-      class="flex-1 rounded-lg border border-surface-lighter bg-surface px-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+      disabled={adding}
+      class="flex-1 rounded-lg border border-surface-lighter bg-surface px-4 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
     />
-    <Button variant="primary" type="submit" loading={adding} disabled={!newDomain.trim()}>
-      Add Domain
+    <Button variant="primary" type="submit" loading={adding} disabled={!newDomain.trim() || adding}>
+      {adding ? "Adding..." : "Add Domain"}
     </Button>
   </form>
 
@@ -142,15 +129,20 @@
 
 <!-- Delete confirmation modal -->
 <Modal bind:open={deleteModalOpen} title="Delete Domain">
+  {#if deleteError}
+    <div class="mb-4 rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-400">
+      {deleteError}
+    </div>
+  {/if}
   <p class="mb-6 text-sm text-slate-300">
     Are you sure you want to remove <span class="font-medium text-slate-100">{domainToDelete?.domain}</span>? This action cannot be undone.
   </p>
   <div class="flex justify-end gap-3">
-    <Button variant="secondary" onclick={() => (deleteModalOpen = false)}>
+    <Button variant="secondary" onclick={() => (deleteModalOpen = false)} disabled={deleting}>
       Cancel
     </Button>
-    <Button variant="danger" loading={deleting} onclick={handleDelete}>
-      Delete
+    <Button variant="danger" loading={deleting} disabled={deleting} onclick={handleDelete}>
+      {deleting ? "Removing..." : "Delete"}
     </Button>
   </div>
 </Modal>
