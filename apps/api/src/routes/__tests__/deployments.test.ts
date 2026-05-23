@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
+import { sql } from "drizzle-orm";
 import { createTestApp, registerUser, authHeaders } from "../../__tests__/setup.js";
 
 describe("Deployment Routes", () => {
@@ -36,6 +37,17 @@ describe("Deployment Routes", () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  // The deploy enqueue path refuses to create a second build while one is in
+  // flight (BuildAlreadyInProgressError → 409). Tests that POST /deploy back
+  // to back need any stale pending/running build jobs marked complete first.
+  beforeEach(() => {
+    app.db.run(
+      sql.raw(
+        "UPDATE build_jobs SET status = 'done' WHERE status IN ('pending','running')",
+      ),
+    );
   });
 
   // ─── List (empty) ─────────────────────────────────────────────────────────

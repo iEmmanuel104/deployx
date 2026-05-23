@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { BuildOptions, BuildResult } from "@deployx/types";
+import { mkdtemp, rename, rm, access } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { ulid } from "ulidx";
+import type { BuildOptions } from "@deployx/types";
 import { validateBuildCommand } from "./validation.js";
 import { NixpacksBuildError } from "./errors.js";
 
@@ -14,20 +18,49 @@ export interface NixpacksBuilderOpts {
 }
 
 /**
- * Builds a project source directory into a Docker image using Nixpacks.
+ * Result of running `nixpacks build --out`.
+ *
+ * Nixpacks writes its build artefacts (Dockerfile, build.sh, nixpkgs-*.nix)
+ * into a `.nixpacks/` subdirectory. The Dockerfile contains `COPY . /app`
+ * so it must be built with the **source directory** as the docker build
+ * context — not the out directory. To make that work in a single
+ * `docker build` call we merge the `.nixpacks/` directory back into the
+ * source tree.
+ */
+export interface NixpacksGenerateResult {
+  /** Source directory ready to be tarred as the docker build context. Contains a `.nixpacks/` directory. */
+  contextDir: string;
+  /** Dockerfile path relative to contextDir (always ".nixpacks/Dockerfile"). */
+  dockerfile: string;
+  /** Combined stdout/stderr from Nixpacks. */
+  buildLog: string;
+  /** Wall-clock time in ms. */
+  durationMs: number;
+}
+
+/**
+ * Runs Nixpacks in "generate Dockerfile" mode (`nixpacks build --out`).
+ *
+ * This replaces the previous `--name` invocation which shells out to
+ * `docker buildx build` with the docker-container driver — that driver
+ * needs a WebSocket upgrade on `/session` which the Tecnativa
+ * docker-socket-proxy intentionally refuses.
  *
  * Uses execFile (NOT exec) to prevent command injection — arguments are
  * passed as an array, never interpolated into a shell string.
+ *
+ * The returned `contextDir` IS `options.sourceDir` with a `.nixpacks/`
+ * subdirectory merged in. The caller is responsible for cleaning up the
+ * source dir (which already happens via `cleanupBuildDir`).
  */
 export async function buildWithNixpacks(
   options: BuildOptions,
   builderOpts?: NixpacksBuilderOpts,
-): Promise<BuildResult> {
+): Promise<NixpacksGenerateResult> {
   const bin = builderOpts?.nixpacksBin ?? "nixpacks";
   const timeoutMs = builderOpts?.timeoutMs ?? 600_000;
   const startTime = Date.now();
 
-  // Validate custom commands before passing to Nixpacks
   if (options.buildCmd) {
     validateBuildCommand(options.buildCmd);
   }
@@ -35,12 +68,14 @@ export async function buildWithNixpacks(
     validateBuildCommand(options.startCmd);
   }
 
+  const outDir = await mkdtemp(join(tmpdir(), `deployx-nixpacks-${ulid()}-`));
+
   // Build args array — NEVER interpolated into a shell string
   const args: string[] = [
     "build",
     options.sourceDir,
-    "--name",
-    options.imageTag,
+    "--out",
+    outDir,
   ];
 
   if (options.buildCmd) {
@@ -53,34 +88,58 @@ export async function buildWithNixpacks(
     args.push("--no-cache");
   }
 
-  // Environment variables as individual --env flags
   if (options.envVars) {
     for (const [key, value] of Object.entries(options.envVars)) {
       args.push("--env", `${key}=${value}`);
     }
   }
 
+  let stdout = "";
+  let stderr = "";
   try {
-    const { stdout, stderr } = await execFileAsync(bin, args, {
+    const res = await execFileAsync(bin, args, {
       timeout: timeoutMs,
       maxBuffer: 10 * 1024 * 1024, // 10 MB log buffer
     });
-
-    const buildLog =
-      stdout + (stderr ? `\n--- stderr ---\n${stderr}` : "");
-
-    return {
-      imageTag: options.imageTag,
-      buildLog,
-      durationMs: Date.now() - startTime,
-    };
+    stdout = res.stdout;
+    stderr = res.stderr;
   } catch (err: unknown) {
+    await rm(outDir, { recursive: true, force: true }).catch(() => {});
     const buildLog = extractBuildLog(err);
     throw new NixpacksBuildError(
       `Nixpacks build failed for ${options.imageTag}: ${err instanceof Error ? err.message : String(err)}`,
       buildLog,
     );
   }
+
+  // Move the .nixpacks/ folder from outDir into the source directory so the
+  // docker build context includes both the app source and the generated
+  // Dockerfile. Nixpacks' Dockerfile uses `COPY . /app` so the context root
+  // must be the source dir, not outDir.
+  const nixpacksSubdir = join(outDir, ".nixpacks");
+  try {
+    await access(nixpacksSubdir);
+  } catch {
+    await rm(outDir, { recursive: true, force: true }).catch(() => {});
+    throw new NixpacksBuildError(
+      `Nixpacks did not produce a .nixpacks/ directory at ${nixpacksSubdir}`,
+      stdout + (stderr ? `\n--- stderr ---\n${stderr}` : ""),
+    );
+  }
+
+  const targetNixpacks = join(options.sourceDir, ".nixpacks");
+  await rm(targetNixpacks, { recursive: true, force: true }).catch(() => {});
+  await rename(nixpacksSubdir, targetNixpacks);
+  await rm(outDir, { recursive: true, force: true }).catch(() => {});
+
+  const buildLog = stdout + (stderr ? `\n--- stderr ---\n${stderr}` : "");
+
+  return {
+    contextDir: options.sourceDir,
+    dockerfile: ".nixpacks/Dockerfile",
+    buildLog,
+    durationMs: Date.now() - startTime,
+  };
 }
 
 function extractBuildLog(err: unknown): string {

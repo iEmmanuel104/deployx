@@ -1,7 +1,13 @@
 export {
   buildWithNixpacks,
   type NixpacksBuilderOpts,
+  type NixpacksGenerateResult,
 } from "./nixpacks.js";
+export {
+  buildImageFromContext,
+  type BuildImageFromContextOpts,
+  type BuildImageFromContextResult,
+} from "./build-context.js";
 export {
   cloneRepo,
   cleanupBuildDir,

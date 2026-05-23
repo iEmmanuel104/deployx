@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { deployments, projects } from "@deployx/db";
-import { buildWithNixpacks, cloneRepo, cleanupBuildDir } from "@deployx/builder";
+import {
+  buildWithNixpacks,
+  buildImageFromContext,
+  cloneRepo,
+  cleanupBuildDir,
+} from "@deployx/builder";
 import { BuildJobPayloadSchema } from "@deployx/types";
 import type { DeployJobPayload } from "@deployx/types";
 import type { JobContext } from "../processor.js";
@@ -40,10 +45,11 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
     clonedDir = cloneResult.dir;
   }
 
+  let combinedBuildLog = "";
   try {
-    logger.info({ imageTag: payload.imageTag }, "Starting Nixpacks build");
+    logger.info({ imageTag: payload.imageTag }, "Generating Dockerfile with Nixpacks");
 
-    const result = await buildWithNixpacks({
+    const nixpacksResult = await buildWithNixpacks({
       sourceDir: actualSourceDir,
       imageTag: payload.imageTag,
       buildType: payload.buildType,
@@ -52,13 +58,34 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       envVars: payload.envVars,
       noCache: false,
     });
+    combinedBuildLog = nixpacksResult.buildLog;
+
+    logger.info(
+      {
+        imageTag: payload.imageTag,
+        contextDir: nixpacksResult.contextDir,
+        dockerfile: nixpacksResult.dockerfile,
+      },
+      "Dockerfile generated, building image via HTTP API",
+    );
+
+    const imageResult = await buildImageFromContext({
+      contextDir: nixpacksResult.contextDir,
+      dockerfile: nixpacksResult.dockerfile,
+      tag: payload.imageTag,
+      buildArgs: payload.envVars,
+      labels: {
+        "deployx.project-id": payload.projectId,
+        "deployx.deployment-id": payload.deploymentId,
+      },
+    });
 
     // Update deployment with build results
     await db
       .update(deployments)
       .set({
-        imageTag: result.imageTag,
-        buildLog: result.buildLog,
+        imageTag: imageResult.imageTag,
+        buildLog: combinedBuildLog,
         status: "deploying",
       })
       .where(eq(deployments.id, payload.deploymentId));
@@ -66,7 +93,7 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
     // Update project with image tag
     await db
       .update(projects)
-      .set({ imageTag: result.imageTag, updatedAt: now() })
+      .set({ imageTag: imageResult.imageTag, updatedAt: now() })
       .where(eq(projects.id, payload.projectId));
 
     // Enqueue follow-up deploy job
@@ -81,7 +108,7 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       const deployPayload: DeployJobPayload = {
         projectId: payload.projectId,
         deploymentId: payload.deploymentId,
-        imageTag: result.imageTag,
+        imageTag: imageResult.imageTag,
         slug: project.slug,
         port: payload.port,
         envVars: payload.envVars,
@@ -101,7 +128,11 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
     }
 
     logger.info(
-      { imageTag: result.imageTag, durationMs: result.durationMs },
+      {
+        imageTag: imageResult.imageTag,
+        nixpacksMs: nixpacksResult.durationMs,
+        imageBuildMs: imageResult.durationMs,
+      },
       "Build succeeded",
     );
   } catch (err) {
@@ -113,6 +144,7 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       .set({
         status: "failed",
         errorMsg,
+        buildLog: combinedBuildLog || null,
         finishedAt: now(),
       })
       .where(eq(deployments.id, payload.deploymentId));

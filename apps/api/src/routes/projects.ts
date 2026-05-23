@@ -10,6 +10,7 @@ import { getOwnedProject } from "../utils/ownership.js";
 import {
   enqueueJob,
   createDeploymentAndEnqueueBuild,
+  BuildAlreadyInProgressError,
 } from "../queue/helpers.js";
 
 const CreateProjectBody = z.object({
@@ -188,26 +189,43 @@ export async function projectRoutes(fastify: FastifyInstance): Promise<void> {
 
       const imageTag = `deployx/${project.slug}:deploy-${ulid()}`;
 
-      const { deploymentId, jobId } = await createDeploymentAndEnqueueBuild(
-        fastify.db,
-        {
-          projectId: id,
-          trigger: "manual",
-          buildPayload: {
+      try {
+        const { deploymentId, jobId } = await createDeploymentAndEnqueueBuild(
+          fastify.db,
+          {
             projectId: id,
-            sourceDir: project.gitRepo ?? "",
-            imageTag,
-            buildType:
-              (project.buildType as "nixpacks" | "railpack" | "dockerfile") ??
-              "nixpacks",
-            buildCmd: project.buildCmd ?? null,
-            startCmd: project.startCmd ?? null,
-            port: project.port ?? 3000,
+            trigger: "manual",
+            buildPayload: {
+              projectId: id,
+              sourceDir: project.gitRepo ?? "",
+              imageTag,
+              buildType:
+                (project.buildType as "nixpacks" | "railpack" | "dockerfile") ??
+                "nixpacks",
+              buildCmd: project.buildCmd ?? null,
+              startCmd: project.startCmd ?? null,
+              port: project.port ?? 3000,
+            },
           },
-        },
-      );
+        );
 
-      return reply.status(202).send(success({ deploymentId, jobId }));
+        return reply.status(202).send(success({ deploymentId, jobId }));
+      } catch (err) {
+        if (err instanceof BuildAlreadyInProgressError) {
+          return reply.status(409).send({
+            ok: false,
+            error: {
+              code: err.code,
+              message: err.message,
+              details: {
+                existingJobId: err.existingJobId,
+                existingDeploymentId: err.existingDeploymentId,
+              },
+            },
+          });
+        }
+        throw err;
+      }
     },
   });
 

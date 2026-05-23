@@ -149,6 +149,10 @@ describe("createDeploymentAndEnqueueBuild", () => {
       },
     });
 
+    // Build dedup refuses concurrent builds on the same project — simulate
+    // the first build completing before enqueuing the second.
+    db.update(buildJobs).set({ status: "done" }).run();
+
     await createDeploymentAndEnqueueBuild(db, {
       projectId: "proj1",
       trigger: "cli",
@@ -162,6 +166,34 @@ describe("createDeploymentAndEnqueueBuild", () => {
     expect(deps).toHaveLength(2);
     const versions = deps.map((d) => d.version).sort();
     expect(versions).toEqual([1, 2]);
+  });
+
+  it("refuses to enqueue a second build while one is in flight", async () => {
+    const { BuildAlreadyInProgressError } = await import("../helpers.js");
+
+    await createDeploymentAndEnqueueBuild(db, {
+      projectId: "proj1",
+      trigger: "manual",
+      buildPayload: {
+        projectId: "proj1", sourceDir: "/builds/test",
+        imageTag: "deployx/test:v1", buildType: "nixpacks", port: 3000,
+      },
+    });
+
+    await expect(
+      createDeploymentAndEnqueueBuild(db, {
+        projectId: "proj1",
+        trigger: "cli",
+        buildPayload: {
+          projectId: "proj1", sourceDir: "/builds/test",
+          imageTag: "deployx/test:v2", buildType: "nixpacks", port: 3000,
+        },
+      }),
+    ).rejects.toBeInstanceOf(BuildAlreadyInProgressError);
+
+    // No second deployment row should have been created.
+    const deps = db.select().from(deployments).all();
+    expect(deps).toHaveLength(1);
   });
 
   it("includes commit info when provided", async () => {
