@@ -67,6 +67,20 @@ export type SslStatus = z.infer<typeof SslStatusSchema>;
 export const DOMAIN_REGEX =
   /^(?!-)[a-zA-Z0-9-]{1,63}(?<!-)(\.[a-zA-Z0-9-]{1,63})*\.[a-zA-Z]{2,}$/;
 
+/**
+ * URL-safe slug, used as the project subdomain.
+ *
+ * - Lowercase alphanumeric plus hyphen
+ * - First and last char must be alphanumeric (no leading/trailing hyphen)
+ * - Length 1–48
+ *
+ * Length is enforced by the regex itself: 1 char alone, or 2–48 chars with
+ * the interior class `[a-z0-9-]{0,46}`. The explicit `.max(48)` on the Zod
+ * schema gives a friendlier error message but is redundant for validation.
+ */
+export const SLUG_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$/;
+export const SLUG_MAX_LENGTH = 48;
+
 // ─── Table Schemas ───────────────────────────────────────────────────────────
 
 export const UserSchema = z.object({
@@ -86,7 +100,12 @@ export const ProjectSchema = z.object({
   id: z.string().describe("ULID primary key"),
   user_id: z.string().min(1),
   name: z.string().min(1).describe("Unique per user"),
-  slug: z.string().min(1).describe("URL-safe, unique, used for subdomains"),
+  slug: z
+    .string()
+    .min(1)
+    .max(SLUG_MAX_LENGTH)
+    .regex(SLUG_REGEX)
+    .describe("URL-safe, unique, used for subdomains"),
   description: z.string().nullable().optional(),
   source_type: SourceTypeSchema,
   git_repo: z.string().nullable().optional(),
@@ -379,7 +398,7 @@ export const DeployJobPayloadSchema = z.object({
   projectId: z.string().min(1),
   deploymentId: z.string().min(1),
   imageTag: z.string().min(1),
-  slug: z.string().min(1),
+  slug: z.string().min(1).max(SLUG_MAX_LENGTH).regex(SLUG_REGEX),
   port: z.number().int().positive(),
   envVars: z.record(z.string(), z.string()).optional(),
   platformDomain: z.string().optional(),

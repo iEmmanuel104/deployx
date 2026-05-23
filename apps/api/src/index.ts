@@ -12,6 +12,7 @@ import {
   serializerCompiler,
   validatorCompiler,
 } from "fastify-type-provider-zod";
+import { ulid } from "ulidx";
 
 import { createDb, probeDb } from "@deployx/db";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
@@ -29,16 +30,56 @@ import { systemRoutes } from "./routes/system.js";
 const PORT = Number(process.env["PORT"] ?? 3001);
 const HOST = "0.0.0.0";
 
+// S1 — Fail-fast on insecure secrets. We refuse to start with either secret
+// missing or set to the documented placeholder; running with a known-default
+// secret in production would let anyone mint valid JWTs / decrypt env vars.
+// Skipped under NODE_ENV=test so the in-memory test harness can set its own.
+function assertProductionSecrets(): void {
+  if (process.env["NODE_ENV"] === "test") return;
+  const jwtSecret = process.env["JWT_SECRET"];
+  if (!jwtSecret || jwtSecret === "change-me-in-production") {
+    console.error(
+      "[fatal] JWT_SECRET is missing or set to the default placeholder. " +
+        "Generate a strong secret (e.g. `openssl rand -hex 32`) and set it " +
+        "in /etc/deployx/.env before starting.",
+    );
+    process.exit(1);
+  }
+  const encKey = process.env["ENCRYPTION_KEY"];
+  if (!encKey || encKey === "change-me-in-production") {
+    console.error(
+      "[fatal] ENCRYPTION_KEY is missing or set to the default placeholder. " +
+        "Generate a 32-byte hex key (e.g. `openssl rand -hex 32`) and set it " +
+        "in /etc/deployx/.env before starting.",
+    );
+    process.exit(1);
+  }
+}
+
+assertProductionSecrets();
+
 export async function buildApp() {
   const app = Fastify({
     logger: {
       level: process.env["LOG_LEVEL"] ?? "info",
     },
+    // S7 — Use ULIDs for request IDs so logs / error envelopes carry a
+    // lexicographically sortable, globally unique identifier.
+    genReqId: () => ulid(),
   });
 
   // Zod type provider
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+
+  // S7 — Bind request.id on every request as a defense-in-depth in case any
+  // upstream code overwrites the generator. Also surfaced via x-request-id.
+  app.addHook("onRequest", async (request, reply) => {
+    if (!request.id || /^req-\d/.test(request.id)) {
+      (request as { id: string }).id = ulid();
+    }
+    void reply.header("x-request-id", request.id);
+  });
 
   // --- plugins ---
   await app.register(cors, { origin: true, credentials: true });
