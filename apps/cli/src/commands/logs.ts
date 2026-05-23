@@ -5,11 +5,18 @@ import { apiStreamSse } from "../lib/api.js";
 export function registerLogsCommand(program: Command): void {
   program
     .command("logs")
-    .description("Stream logs for a project")
-    .argument("<project>", "Project ID (ULID) or slug")
-    .option("-f, --follow", "Follow log output", false)
-    .option("-n, --lines <n>", "Number of historical lines to show", "200")
+    .description("Stream container logs for a project")
+    .argument("<project>", "Project slug or ULID")
+    .option("-f, --follow", "Follow log output (stream new lines as they arrive)", false)
+    .option("-n, --lines <n>", "Number of historical lines to show (1-10000)", "200")
     .option("-t, --timestamps", "Prefix each line with the container timestamp", false)
+    .addHelpText(
+      "after",
+      "\nExamples:\n" +
+        "  $ deployx logs my-app                  # last 200 lines\n" +
+        "  $ deployx logs my-app -f               # tail -f\n" +
+        "  $ deployx logs my-app -n 1000 -t       # 1000 lines with timestamps",
+    )
     .action(
       async (
         project: string,

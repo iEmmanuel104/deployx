@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import chalk from "chalk";
 import { apiFetch } from "../lib/api.js";
+import { emit } from "../lib/output.js";
 
 interface GcResult {
   buildsDir: string;
@@ -18,12 +19,15 @@ export function registerBuildsCommand(program: Command): void {
   builds
     .command("gc")
     .description("Garbage-collect old build artifacts on the server")
-    .option(
-      "-k, --keep <n>",
-      "Number of builds to keep per project",
-      "5",
-    )
+    .option("-k, --keep <n>", "Number of builds to keep per project", "5")
     .option("--dry-run", "Report what would be removed without deleting")
+    .addHelpText(
+      "after",
+      "\nExamples:\n" +
+        "  $ deployx builds gc                  # keep 5 per project\n" +
+        "  $ deployx builds gc --keep 10\n" +
+        "  $ deployx builds gc --dry-run        # preview without deleting",
+    )
     .action(async (options: { keep: string; dryRun?: boolean }) => {
       const params = new URLSearchParams({ keep: options.keep });
       if (options.dryRun) params.set("dryRun", "1");
@@ -33,16 +37,18 @@ export function registerBuildsCommand(program: Command): void {
         `/api/v1/system/gc?${params.toString()}`,
       );
 
-      const verb = options.dryRun ? chalk.yellow("[DRY RUN]") : chalk.green("Removed");
-      console.log(`${chalk.bold("Build GC")} — ${result.buildsDir}`);
-      console.log(`  Scanned:     ${result.scanned}`);
-      console.log(`  Kept:        ${result.kept}`);
-      console.log(`  ${verb}:     ${result.removed}`);
-      console.log(`  Bytes freed: ${formatBytes(result.bytesFreed)}`);
-      if (result.errors.length > 0) {
-        console.log(chalk.red(`  Errors: ${result.errors.length}`));
-        for (const e of result.errors) console.log(chalk.red(`    ${e.path}: ${e.message}`));
-      }
+      emit(result, (r) => {
+        const verb = options.dryRun ? chalk.yellow("[DRY RUN]") : chalk.green("Removed");
+        console.log(`${chalk.bold("Build GC")} — ${r.buildsDir}`);
+        console.log(`  Scanned:     ${r.scanned}`);
+        console.log(`  Kept:        ${r.kept}`);
+        console.log(`  ${verb}:     ${r.removed}`);
+        console.log(`  Bytes freed: ${formatBytes(r.bytesFreed)}`);
+        if (r.errors.length > 0) {
+          console.log(chalk.red(`  Errors: ${r.errors.length}`));
+          for (const e of r.errors) console.log(chalk.red(`    ${e.path}: ${e.message}`));
+        }
+      });
     });
 }
 

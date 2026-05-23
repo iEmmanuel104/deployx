@@ -3,14 +3,23 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import chalk from "chalk";
 import { config } from "../lib/config.js";
+import { emit, failJson, isJsonMode } from "../lib/output.js";
 
 export function registerLoginCommand(program: Command): void {
   program
     .command("login")
-    .description("Authenticate with a DeployX server")
+    .description("Authenticate with a DeployX server and persist tokens locally")
     .option("-s, --server <url>", "API server URL (e.g. https://deploy.example.com)")
-    .option("-e, --email <email>", "Email (skips prompt)")
-    .action(async (options: { server?: string; email?: string }) => {
+    .option("-e, --email <email>", "Email (skips the email prompt)")
+    .option("-p, --password <password>", "Password (skips the prompt — useful for scripts)")
+    .addHelpText(
+      "after",
+      "\nExamples:\n" +
+        "  $ deployx login --server https://deploy.example.com\n" +
+        "  $ deployx login -s https://deploy.example.com -e me@example.com\n" +
+        "  $ deployx login -s ... -e me@example.com -p \"$DEPLOYX_PASSWORD\" --json",
+    )
+    .action(async (options: { server?: string; email?: string; password?: string }) => {
       const rl = createInterface({ input, output });
 
       let server = options.server ?? (config.get("server") as string | undefined);
@@ -20,26 +29,41 @@ export function registerLoginCommand(program: Command): void {
       server = server.replace(/\/$/, "");
 
       const email = options.email ?? (await rl.question("Email: ")).trim();
-      // password — read with terminal echo off
-      output.write("Password: ");
-      const password = await readPasswordSilently();
+
+      let password = options.password;
+      if (!password) {
+        output.write("Password: ");
+        password = await readPasswordSilently();
+      }
       rl.close();
 
-      const res = await fetch(`${server}/api/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`${server}/api/v1/auth/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        });
+      } catch (err) {
+        const msg = `Cannot reach ${server} (${err instanceof Error ? err.message : String(err)})`;
+        if (isJsonMode()) failJson({ code: "NETWORK", message: msg }, 3);
+        console.error(chalk.red(msg));
+        process.exit(3);
+      }
 
       const env = (await res.json()) as {
         ok: boolean;
         data?: { accessToken: string; refreshToken: string; user: { email: string } };
-        error?: { message?: string };
+        error?: { message?: string; code?: string };
       };
 
       if (!env.ok || !env.data) {
-        console.error(chalk.red(`Login failed: ${env.error?.message ?? res.statusText}`));
-        process.exit(1);
+        const msg = env.error?.message ?? res.statusText;
+        if (isJsonMode()) {
+          failJson({ code: env.error?.code ?? "LOGIN_FAILED", message: `Login failed: ${msg}` }, 2);
+        }
+        console.error(chalk.red(`Login failed: ${msg}`));
+        process.exit(2);
       }
 
       config.set("server", server);
@@ -47,7 +71,10 @@ export function registerLoginCommand(program: Command): void {
       config.set("refreshToken", env.data.refreshToken);
       config.set("userEmail", env.data.user.email);
 
-      console.log(chalk.green(`Logged in as ${env.data.user.email} at ${server}`));
+      emit(
+        { server, userEmail: env.data.user.email },
+        (d) => console.log(chalk.green(`Logged in as ${d.userEmail} at ${d.server}`)),
+      );
     });
 }
 

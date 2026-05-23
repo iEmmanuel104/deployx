@@ -120,6 +120,9 @@ importers:
       ora:
         specifier: ^8.2.0
         version: 8.2.0
+      ulidx:
+        specifier: ^2.4.1
+        version: 2.4.1
     devDependencies:
       '@types/node':
         specifier: ^25.5.2
