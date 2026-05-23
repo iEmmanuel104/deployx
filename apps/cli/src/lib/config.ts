@@ -1,4 +1,5 @@
 import Conf from "conf";
+import { failJson, isJsonMode } from "./output.js";
 
 interface CliConfig {
   server: string;
@@ -27,9 +28,9 @@ export function requireAuth(): { server: string; accessToken: string } {
   const server = config.get("server") as string | undefined;
   const accessToken = config.get("accessToken") as string | undefined;
   if (!server || !accessToken) {
-    console.error(
-      "Not logged in. Run `deployx login --server <url>` first.",
-    );
+    const msg = "Not logged in. Run `deployx login --server <url>` first.";
+    if (isJsonMode()) failJson({ code: "AUTH_MISSING", message: msg }, 2);
+    console.error(msg);
     process.exit(2);
   }
   return { server: server.replace(/\/$/, ""), accessToken };
