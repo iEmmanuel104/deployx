@@ -31,6 +31,7 @@ import { envVarRoutes } from "./routes/env-vars.js";
 import { metricRoutes } from "./routes/metrics.js";
 import { systemRoutes } from "./routes/system.js";
 import { apiTokenRoutes } from "./routes/api-tokens.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 
 const PORT = Number(process.env["PORT"] ?? 3001);
 const HOST = "0.0.0.0";
@@ -191,6 +192,7 @@ export async function buildApp() {
   await app.register(metricRoutes);
   await app.register(systemRoutes);
   await app.register(apiTokenRoutes);
+  await app.register(webhookRoutes);
 
   // --- job queue ---
   await app.register(queueProcessorPlugin, {

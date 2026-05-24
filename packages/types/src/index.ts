@@ -443,6 +443,50 @@ export const RestartJobPayloadSchema = z.object({
 });
 export type RestartJobPayload = z.infer<typeof RestartJobPayloadSchema>;
 
+// ─── Webhook Payloads ────────────────────────────────────────────────────────
+
+// Subset of GitHub / GitLab push-event fields we extract for commit metadata.
+// Kept permissive (all-optional, passthrough) because we accept any provider —
+// signature verification is the trust boundary, not the schema.
+export const GitWebhookPayloadSchema = z
+  .object({
+    ref: z.string().optional(),
+    after: z.string().optional(),
+    head_commit: z
+      .object({
+        id: z.string().optional(),
+        message: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+    commits: z
+      .array(
+        z
+          .object({
+            id: z.string().optional(),
+            message: z.string().optional(),
+          })
+          .passthrough(),
+      )
+      .optional(),
+    repository: z
+      .object({
+        default_branch: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+export type GitWebhookPayload = z.infer<typeof GitWebhookPayloadSchema>;
+
+export const WebhookInfoSchema = z.object({
+  url: z.string().url(),
+  secret: z.string().min(1),
+  contentType: z.literal("application/json"),
+  signatureHeader: z.literal("X-Hub-Signature-256"),
+});
+export type WebhookInfo = z.infer<typeof WebhookInfoSchema>;
+
 // ─── Platform Config ─────────────────────────────────────────────────────────
 
 export const PlatformConfigSchema = z.object({

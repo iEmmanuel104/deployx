@@ -32,6 +32,13 @@ export function deriveProjectKey(masterKey: Buffer, projectId: string): Buffer {
   return Buffer.from(hkdfSync("sha256", masterKey, "deployx-v1", projectId, 32));
 }
 
+// Per-project webhook secret derived from the master key. Using a distinct
+// `info` ("webhook") domain-separates this output from deriveProjectKey so
+// that compromising or rotating one cannot leak the other.
+export function deriveWebhookSecret(masterKey: Buffer, projectId: string): Buffer {
+  return Buffer.from(hkdfSync("sha256", masterKey, projectId, "webhook", 32));
+}
+
 export function parseEncryptionKey(hexKey: string): Buffer {
   if (!/^[0-9a-fA-F]{64}$/.test(hexKey)) {
     throw new Error("Encryption key must be 64 hex characters (32 bytes)");
