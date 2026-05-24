@@ -11,6 +11,9 @@ import { BuildJobPayloadSchema } from "@deployx/types";
 import type { DeployJobPayload } from "@deployx/types";
 import type { JobContext } from "../processor.js";
 import { enqueueJob } from "../helpers.js";
+import { truncate } from "../../utils/truncate.js";
+
+const LOG_CAP = 64 * 1024;
 
 export async function handleBuildJob(ctx: JobContext): Promise<void> {
   const { job, db, logger } = ctx;
@@ -109,7 +112,7 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       .update(deployments)
       .set({
         imageTag: imageResult.imageTag,
-        buildLog: combinedBuildLog,
+        buildLog: truncate(combinedBuildLog, LOG_CAP),
         status: "deploying",
       })
       .where(eq(deployments.id, payload.deploymentId));
@@ -161,15 +164,17 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
       "Build succeeded",
     );
   } catch (err) {
-    const errorMsg =
-      err instanceof Error ? err.message : String(err);
+    const errorMsg = truncate(
+      err instanceof Error ? err.message : String(err),
+      LOG_CAP,
+    );
 
     await db
       .update(deployments)
       .set({
         status: "failed",
         errorMsg,
-        buildLog: combinedBuildLog || null,
+        buildLog: combinedBuildLog ? truncate(combinedBuildLog, LOG_CAP) : null,
         finishedAt: now(),
       })
       .where(eq(deployments.id, payload.deploymentId));
