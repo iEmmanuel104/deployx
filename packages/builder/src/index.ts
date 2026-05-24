@@ -9,6 +9,10 @@ export {
   type BuildImageFromContextResult,
 } from "./build-context.js";
 export {
+  buildFromUserDockerfile,
+  type BuildFromUserDockerfileOpts,
+} from "./dockerfile.js";
+export {
   cloneRepo,
   cleanupBuildDir,
   type CloneResult,
