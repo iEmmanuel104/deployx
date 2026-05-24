@@ -66,20 +66,67 @@ export type { ApiResponse, AuthTokens, Project, Domain, EnvVar, Deployment, Metr
 export function createApiClient(
   baseUrl: string,
   getToken: () => string | null,
+  setToken?: (token: string) => void,
 ) {
+  // Single in-flight refresh promise so a burst of parallel 401s only triggers
+  // one /auth/refresh call. All callers await the same promise and then retry.
+  let refreshInFlight: Promise<string | null> | null = null;
+
+  async function refreshToken(): Promise<string | null> {
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = (async () => {
+      try {
+        const r = await fetch(`${baseUrl}/api/v1/auth/refresh`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!r.ok) return null;
+        const payload = (await r.json()) as ApiResponse<{ accessToken: string }>;
+        if (!payload.ok || !payload.data?.accessToken) return null;
+        const next = payload.data.accessToken;
+        if (setToken) setToken(next);
+        // Mirror the new token to the SvelteKit session cookie so a hard
+        // reload picks it up via layout.server.ts.
+        if (typeof window !== "undefined") {
+          await fetch("/api/auth/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accessToken: next }),
+          });
+        }
+        return next;
+      } catch {
+        return null;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
+  }
+
+  async function doFetch(
+    method: string,
+    path: string,
+    serializedBody: string | undefined,
+    token: string | null,
+  ): Promise<Response> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body: serializedBody,
+      credentials: "include",
+    });
+  }
+
   async function request<T>(
     method: string,
     path: string,
     body?: unknown,
   ): Promise<ApiResponse<T>> {
-    const token = getToken();
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-
     // Fastify with @fastify/json content-type parser rejects an empty body
     // when Content-Type: application/json is set. Always send a JSON-encoded
     // body so POSTs without an explicit payload still parse cleanly.
@@ -88,12 +135,17 @@ export function createApiClient(
         ? undefined
         : JSON.stringify(body ?? {});
 
-    const res = await fetch(`${baseUrl}${path}`, {
-      method,
-      headers,
-      body: serializedBody,
-      credentials: "include",
-    });
+    let res = await doFetch(method, path, serializedBody, getToken());
+
+    // On 401, try one silent refresh-then-retry round. Don't refresh on the
+    // refresh endpoint itself — that would loop. 403 means the token is
+    // valid but the user lacks permission; refreshing won't help.
+    if (res.status === 401 && !path.startsWith("/api/v1/auth/")) {
+      const next = await refreshToken();
+      if (next) {
+        res = await doFetch(method, path, serializedBody, next);
+      }
+    }
 
     if (res.status === 401 || res.status === 403) {
       if (typeof window !== "undefined") {

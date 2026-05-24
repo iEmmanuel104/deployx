@@ -13,6 +13,7 @@ import { registerEnvCommand } from "./commands/env.js";
 import { registerDomainsCommand } from "./commands/domains.js";
 import { registerRollbackCommand } from "./commands/rollback.js";
 import { registerBuildsCommand } from "./commands/builds.js";
+import { registerDeploymentsCommand } from "./commands/deployments.js";
 import { setJsonMode } from "./lib/output.js";
 
 const program = new Command();
@@ -44,5 +45,6 @@ registerEnvCommand(program);
 registerDomainsCommand(program);
 registerRollbackCommand(program);
 registerBuildsCommand(program);
+registerDeploymentsCommand(program);
 
 program.parse(process.argv);
