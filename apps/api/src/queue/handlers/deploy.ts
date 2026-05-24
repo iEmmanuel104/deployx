@@ -3,6 +3,9 @@ import { deployments, projects } from "@deployx/db";
 import { DockerClient, generateTraefikLabels } from "@deployx/docker";
 import { DeployJobPayloadSchema } from "@deployx/types";
 import type { JobContext } from "../processor.js";
+import { truncate } from "../../utils/truncate.js";
+
+const LOG_CAP = 64 * 1024;
 
 export async function handleDeployJob(ctx: JobContext): Promise<void> {
   const { job, db, logger } = ctx;
@@ -57,7 +60,10 @@ export async function handleDeployJob(ctx: JobContext): Promise<void> {
       restartPolicy: "unless-stopped",
     });
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const errorMsg = truncate(
+      err instanceof Error ? err.message : String(err),
+      LOG_CAP,
+    );
     await db
       .update(deployments)
       .set({ status: "failed", errorMsg, finishedAt: now() })

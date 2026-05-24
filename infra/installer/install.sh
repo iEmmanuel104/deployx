@@ -576,6 +576,62 @@ if command -v litestream &>/dev/null; then
   fi
 fi
 
+# ── rclone backup for Traefik certs (optional) ────────────────────────────────
+# Litestream replicates the SQLite DB, but the ACME cert store at
+# /var/lib/deployx/certs is not a SQLite file and needs a separate
+# object-storage backup. Opt-in: only runs when RCLONE_REMOTE is set in the
+# installer environment. When unset we print a hint and skip — operators who
+# don't need offsite cert backup pay no setup cost.
+log_step "rclone backup for Traefik certs (optional)"
+
+if [[ -n "${RCLONE_REMOTE:-}" ]]; then
+  if command -v rclone &>/dev/null; then
+    log_ok "rclone already installed ($(rclone --version 2>&1 | head -1))"
+  else
+    log_info "Installing rclone"
+    apt-get install -y -qq rclone || {
+      log_warn "rclone install failed — skipping cert backup setup"
+    }
+  fi
+
+  if command -v rclone &>/dev/null; then
+    install -d -m 0755 /var/lib/deployx/certs
+
+    # Write /etc/rclone.conf from env. RCLONE_REMOTE names the remote (e.g.
+    # "deployx-backup") and is also used as the prefix on the rclone sync
+    # command below. RCLONE_TYPE / RCLONE_ACCESS_KEY_ID /
+    # RCLONE_SECRET_ACCESS_KEY / RCLONE_ENDPOINT / RCLONE_REGION drive the
+    # body. Defaults target an S3-compatible provider (R2, Backblaze B2, AWS).
+    cat > /etc/rclone.conf <<RCEOF
+[${RCLONE_REMOTE}]
+type = ${RCLONE_TYPE:-s3}
+provider = ${RCLONE_PROVIDER:-Other}
+access_key_id = ${RCLONE_ACCESS_KEY_ID:-}
+secret_access_key = ${RCLONE_SECRET_ACCESS_KEY:-}
+endpoint = ${RCLONE_ENDPOINT:-}
+region = ${RCLONE_REGION:-auto}
+RCEOF
+    chmod 0600 /etc/rclone.conf
+    log_ok "rclone config written to /etc/rclone.conf (chmod 0600)"
+
+    # Cron drop-in — runs daily via /etc/cron.daily. Idempotent: overwriting
+    # is safe because the file owns its lifecycle.
+    cat > /etc/cron.daily/deployx-cert-backup <<CRONEOF
+#!/bin/bash
+# DeployX — sync Traefik cert store to remote object storage daily.
+set -euo pipefail
+/usr/bin/rclone --config /etc/rclone.conf sync \\
+  /var/lib/deployx/certs ${RCLONE_REMOTE}:deployx-certs/ \\
+  >> /var/log/deployx-cert-backup.log 2>&1
+CRONEOF
+    chmod 0755 /etc/cron.daily/deployx-cert-backup
+    log_ok "Daily cert backup cron installed at /etc/cron.daily/deployx-cert-backup"
+  fi
+else
+  log_info "RCLONE_REMOTE not set — skipping cert backup setup."
+  log_info "To enable, re-run installer with: RCLONE_REMOTE=name RCLONE_ACCESS_KEY_ID=... RCLONE_SECRET_ACCESS_KEY=... RCLONE_ENDPOINT=https://... ./install.sh"
+fi
+
 # ── Build Docker images ──────────────────────────────────────────────────────
 log_step "Building Docker images (this may take 5-10 minutes)"
 

@@ -213,6 +213,9 @@ importers:
       '@deployx/types':
         specifier: workspace:*
         version: link:../types
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       yaml:
         specifier: ^2.7.0
         version: 2.8.3

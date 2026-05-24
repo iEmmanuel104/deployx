@@ -1,23 +1,10 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { ulid } from "ulidx";
 import bcrypt from "bcryptjs";
-import { users as usersTable } from "@deployx/db";
+import { users } from "@deployx/db";
 import { success } from "../utils/response.js";
-
-// The DB stream owns `packages/db/src/schema.ts` and adds the auth-hardening
-// columns (failedLoginAttempts, lockedUntil, tokenVersion) in a separate
-// stream. While the schema.ts in this worktree still reflects the pre-S2/S3
-// shape, the test-DDL and the production migration both create those columns
-// at runtime. We use a structurally widened reference for typing only — all
-// reads/writes go through the same `users` table object.
-type UsersTable = typeof usersTable & {
-  failedLoginAttempts: import("drizzle-orm/sqlite-core").SQLiteColumn;
-  lockedUntil: import("drizzle-orm/sqlite-core").SQLiteColumn;
-  tokenVersion: import("drizzle-orm/sqlite-core").SQLiteColumn;
-};
-const users = usersTable as UsersTable;
 
 const RegisterBody = z.object({
   email: z.string().email(),
@@ -41,17 +28,6 @@ const COOKIE_OPTIONS = {
 // S2 — CLAUDE.md mandates "5 failures = 15 min lockout".
 const MAX_FAILED_LOGINS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
-
-interface UserRow {
-  id: string;
-  email: string;
-  password: string;
-  name: string;
-  role: string;
-  failedLoginAttempts: number | null;
-  lockedUntil: string | null;
-  tokenVersion: number | null;
-}
 
 interface RefreshClaim {
   sub: string;
@@ -186,17 +162,20 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     handler: async (request, reply) => {
       const { email, password } = request.body as z.infer<typeof LoginBody>;
 
-      // Raw SQL so we always see the SEC-owned columns
-      // (failed_login_attempts, locked_until, token_version) regardless of
-      // whether this worktree's Drizzle schema reflects them yet.
-      const loginUserRows = fastify.db.all(
-        sql`SELECT id, email, password, name, role,
-                   failed_login_attempts AS "failedLoginAttempts",
-                   locked_until AS "lockedUntil",
-                   token_version AS "tokenVersion"
-            FROM users WHERE email = ${email} LIMIT 1`,
-      ) as UserRow[];
-      const [user] = loginUserRows;
+      const [user] = await fastify.db
+        .select({
+          id: users.id,
+          email: users.email,
+          password: users.password,
+          name: users.name,
+          role: users.role,
+          failedLoginAttempts: users.failedLoginAttempts,
+          lockedUntil: users.lockedUntil,
+          tokenVersion: users.tokenVersion,
+        })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
 
       if (!user) {
         const err = new Error("Invalid credentials") as Error & { statusCode: number };
@@ -223,16 +202,14 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       const valid = await bcrypt.compare(password, user.password);
       if (!valid) {
         const attempts = (user.failedLoginAttempts ?? 0) + 1;
-        // Raw SQL because the columns are owned by the DB stream and not yet
-        // reflected in @deployx/db's Drizzle schema in this worktree. The
-        // production migration and test DDL both create snake_case columns.
         const lockedUntil =
           attempts >= MAX_FAILED_LOGINS
             ? new Date(Date.now() + LOCKOUT_DURATION_MS).toISOString()
             : null;
-        fastify.db.run(
-          sql`UPDATE users SET failed_login_attempts = ${attempts}, locked_until = ${lockedUntil} WHERE id = ${user.id}`,
-        );
+        await fastify.db
+          .update(users)
+          .set({ failedLoginAttempts: attempts, lockedUntil })
+          .where(eq(users.id, user.id));
 
         const err = new Error("Invalid credentials") as Error & { statusCode: number };
         err.statusCode = 401;
@@ -241,9 +218,10 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
       // Successful login — clear the lockout counter.
       if ((user.failedLoginAttempts ?? 0) > 0 || user.lockedUntil) {
-        fastify.db.run(
-          sql`UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = ${user.id}`,
-        );
+        await fastify.db
+          .update(users)
+          .set({ failedLoginAttempts: 0, lockedUntil: null })
+          .where(eq(users.id, user.id));
       }
 
       const tokenVersion = user.tokenVersion ?? 0;
@@ -305,14 +283,16 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         throw err;
       }
 
-      const refreshUserRows = fastify.db.all(
-        sql`SELECT id, email, password, name, role,
-                   failed_login_attempts AS "failedLoginAttempts",
-                   locked_until AS "lockedUntil",
-                   token_version AS "tokenVersion"
-            FROM users WHERE id = ${payload.sub} LIMIT 1`,
-      ) as UserRow[];
-      const [user] = refreshUserRows;
+      const [user] = await fastify.db
+        .select({
+          id: users.id,
+          email: users.email,
+          role: users.role,
+          tokenVersion: users.tokenVersion,
+        })
+        .from(users)
+        .where(eq(users.id, payload.sub))
+        .limit(1);
 
       if (!user) {
         const err = new Error("User not found") as Error & { statusCode: number };
@@ -362,16 +342,17 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       try {
         const payload = fastify.jwt.verify<RefreshClaim>(token);
         if (payload.sub && payload.type === "refresh") {
-          const logoutUserRows = fastify.db.all(
-            sql`SELECT id, token_version AS "tokenVersion"
-                FROM users WHERE id = ${payload.sub} LIMIT 1`,
-          ) as Array<{ id: string; tokenVersion: number | null }>;
-          const [user] = logoutUserRows;
+          const [user] = await fastify.db
+            .select({ id: users.id, tokenVersion: users.tokenVersion })
+            .from(users)
+            .where(eq(users.id, payload.sub))
+            .limit(1);
           if (user) {
             const nextVersion = (user.tokenVersion ?? 0) + 1;
-            fastify.db.run(
-              sql`UPDATE users SET token_version = ${nextVersion} WHERE id = ${user.id}`,
-            );
+            await fastify.db
+              .update(users)
+              .set({ tokenVersion: nextVersion })
+              .where(eq(users.id, user.id));
           }
         }
       } catch {

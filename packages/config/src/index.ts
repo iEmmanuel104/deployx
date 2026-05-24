@@ -6,6 +6,8 @@ import {
 } from "@deployx/types";
 import type { DeployxConfig, PlatformConfig } from "@deployx/types";
 
+export { loadEnv } from "./loadEnv.js";
+
 /**
  * Reads and validates a deployx.yaml configuration file.
  *
