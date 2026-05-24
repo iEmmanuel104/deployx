@@ -6,6 +6,81 @@ project uses [Conventional Commits](https://www.conventionalcommits.org/).
 
 ---
 
+## [Unreleased] — prod-r2 polish round
+
+### Added
+
+- **OPENAPI** — `@fastify/swagger` + `@fastify/swagger-ui` registered at
+  `/api/docs`; OpenAPI 3 spec auto-generated from the Fastify-Zod schemas
+  so the dashboard, CLI, and external clients have a single source of
+  truth for the wire format.
+- **EMAIL** — Resend integration scaffolding for transactional auth
+  flows: password reset (`POST /api/v1/auth/password/reset`) and email
+  verification (`POST /api/v1/auth/email/verify`). Tokens are
+  single-use, 1-hour-TTL, and stored hashed alongside `users`.
+- **WEBHOOK** — `POST /api/v1/webhooks/git/:provider` receiver with
+  HMAC-SHA256 verification (`X-Hub-Signature-256` for GitHub-style
+  payloads). Validated pushes enqueue a build job for the matching
+  project automatically — no CLI deploy needed for git-driven flows.
+- **UX** — Silent JWT refresh in the dashboard: a single in-flight
+  promise rotates the access token transparently before expiry, so a
+  live tab no longer kicks users back to `/login` every 15 minutes.
+  CLI gains `deployx deployments list/get/logs <project>` for parity
+  with the dashboard's Deployments tab.
+- **BUILDER** — `buildType: dockerfile` now short-circuits Nixpacks and
+  feeds the repo's `Dockerfile` directly to `buildImageFromContext()`.
+  Validates that the file exists before queuing the build.
+- **LIVE** — End-to-end stack verification: the local
+  `docker-compose.dev.yml` brings up traefik + docker-proxy + api +
+  dashboard, and the Playwright happy-path suite (T28) covers register
+  → create project → deploy → live container → delete.
+
+### Changed — POLISH (this PR)
+
+- **Auth queries are now typed Drizzle calls.** Round-1 SEC shipped the
+  account-lockout / token-version flow against `users.failed_login_attempts`,
+  `users.locked_until`, and `users.token_version` via raw `sql\`...\``
+  template strings because the columns were owned by a different stream.
+  Now that the columns exist in the merged schema, the lockout reads,
+  failed-login counter writes, lockout-reset writes, refresh lookup, and
+  logout token-bump are all expressed as typed `db.select(...)` /
+  `db.update(...)` calls. The structural-widening hack on the `users`
+  table reference is gone.
+- **`deployments.errorMsg` and `buildLog` capped at 64 KB.** Both
+  the build and deploy handlers now run any failure message and the
+  build log through `truncate()` (UTF-8-byte-safe, in
+  `apps/api/src/utils/truncate.ts`) before writing to SQLite, suffixing
+  with `\n[...truncated]`. Prevents a runaway exception or multi-MB
+  docker build log from bloating the row or breaking dashboard rendering.
+  Covered by unit tests in `apps/api/src/utils/__tests__/truncate.test.ts`.
+- **Env loading + secret-validation centralized.** New `loadEnv()` helper
+  in `@deployx/config` replaces both the inline `import "dotenv/config"`
+  and the inline `assertProductionSecrets()` in `apps/api/src/index.ts`.
+  It loads `.env` idempotently and fail-fast validates
+  `ENCRYPTION_KEY` / `JWT_SECRET` are present and not set to the
+  documented placeholder. Skipped under `NODE_ENV=test`. Single call
+  site lets future worker processes pick up the same checks for free.
+
+### Infrastructure
+
+- **Optional rclone backup for Traefik certs.** Installer adds an
+  opt-in section gated on `RCLONE_REMOTE`: when set, it installs
+  `rclone`, writes `/etc/rclone.conf` (chmod 0600) from env
+  (`RCLONE_TYPE`, `RCLONE_ACCESS_KEY_ID`, `RCLONE_SECRET_ACCESS_KEY`,
+  `RCLONE_ENDPOINT`, `RCLONE_REGION`), and installs
+  `/etc/cron.daily/deployx-cert-backup` that runs
+  `rclone sync /var/lib/deployx/certs ${RCLONE_REMOTE}:deployx-certs/`.
+  When `RCLONE_REMOTE` is unset the installer prints a hint and skips —
+  operators who don't need offsite cert backup pay no setup cost.
+
+### Docs
+
+- **CHANGELOG.md** — Round-2 `[Unreleased]` section added (this
+  entry). README screenshot refresh is deferred to the LIVE stream so
+  the captures match the post-r2 dashboard.
+
+---
+
 ## [Unreleased] — prod-r1 hardening round
 
 ### Added — OPS stream (this PR)
