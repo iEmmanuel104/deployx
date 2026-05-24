@@ -10,8 +10,14 @@ const DDL_STATEMENTS = [
     failed_login_attempts INTEGER NOT NULL DEFAULT 0,
     locked_until TEXT,
     token_version INTEGER NOT NULL DEFAULT 0,
+    email_verified_at TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT
   )`,
+  `CREATE TABLE IF NOT EXISTS email_tokens (
+    token TEXT PRIMARY KEY, user_id TEXT NOT NULL, kind TEXT NOT NULL,
+    expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_email_tokens_user_kind ON email_tokens (user_id, kind)`,
   `CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE, description TEXT, source_type TEXT NOT NULL,

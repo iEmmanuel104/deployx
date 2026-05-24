@@ -11,10 +11,23 @@ export const users = sqliteTable("users", {
   failedLoginAttempts: integer("failed_login_attempts").default(0).notNull(),
   lockedUntil: text("locked_until"),
   tokenVersion: integer("token_version").default(0).notNull(),
+  emailVerifiedAt: text("email_verified_at"),     // null = unverified
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
   deletedAt: text("deleted_at"),                  // soft delete
 });
+
+// email_tokens table — one-time tokens for password reset + email verification
+export const emailTokens = sqliteTable("email_tokens", {
+  token: text("token").primaryKey(),              // 32-byte hex (64 chars)
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(),                   // 'reset' | 'verify'
+  expiresAt: text("expires_at").notNull(),
+  usedAt: text("used_at"),                        // null until consumed
+  createdAt: text("created_at").notNull(),
+}, (table) => [
+  index("idx_email_tokens_user_kind").on(table.userId, table.kind),
+]);
 
 // projects table
 export const projects = sqliteTable("projects", {

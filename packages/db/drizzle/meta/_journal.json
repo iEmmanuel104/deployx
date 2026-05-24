@@ -15,6 +15,13 @@
       "when": 1779531727524,
       "tag": "0001_cynical_satana",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779623784917,
+      "tag": "0002_panoramic_nomad",
+      "breakpoints": true
     }
   ]
 }
