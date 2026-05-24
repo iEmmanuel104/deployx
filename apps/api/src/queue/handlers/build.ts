@@ -3,6 +3,7 @@ import { deployments, projects } from "@deployx/db";
 import {
   buildWithNixpacks,
   buildImageFromContext,
+  buildFromUserDockerfile,
   cloneRepo,
   cleanupBuildDir,
 } from "@deployx/builder";
@@ -47,38 +48,61 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
 
   let combinedBuildLog = "";
   try {
-    logger.info({ imageTag: payload.imageTag }, "Generating Dockerfile with Nixpacks");
+    const labels = {
+      "deployx.project-id": payload.projectId,
+      "deployx.deployment-id": payload.deploymentId,
+    };
 
-    const nixpacksResult = await buildWithNixpacks({
-      sourceDir: actualSourceDir,
-      imageTag: payload.imageTag,
-      buildType: payload.buildType,
-      buildCmd: payload.buildCmd,
-      startCmd: payload.startCmd,
-      envVars: payload.envVars,
-      noCache: false,
-    });
-    combinedBuildLog = nixpacksResult.buildLog;
+    let imageResult: { imageTag: string; durationMs: number };
+    let nixpacksMs = 0;
 
-    logger.info(
-      {
+    if (payload.buildType === "dockerfile") {
+      const dockerfilePath = process.env["DEPLOYX_USER_DOCKERFILE"] ?? "Dockerfile";
+      logger.info(
+        { imageTag: payload.imageTag, contextDir: actualSourceDir, dockerfilePath },
+        "Building image from user Dockerfile (Nixpacks skipped)",
+      );
+
+      imageResult = await buildFromUserDockerfile({
+        contextDir: actualSourceDir,
+        dockerfilePath,
+        tag: payload.imageTag,
+        envVars: payload.envVars,
+        labels,
+      });
+      combinedBuildLog = `Built from user Dockerfile at ${dockerfilePath}`;
+    } else {
+      logger.info({ imageTag: payload.imageTag }, "Generating Dockerfile with Nixpacks");
+
+      const nixpacksResult = await buildWithNixpacks({
+        sourceDir: actualSourceDir,
         imageTag: payload.imageTag,
+        buildType: payload.buildType,
+        buildCmd: payload.buildCmd,
+        startCmd: payload.startCmd,
+        envVars: payload.envVars,
+        noCache: false,
+      });
+      combinedBuildLog = nixpacksResult.buildLog;
+      nixpacksMs = nixpacksResult.durationMs;
+
+      logger.info(
+        {
+          imageTag: payload.imageTag,
+          contextDir: nixpacksResult.contextDir,
+          dockerfile: nixpacksResult.dockerfile,
+        },
+        "Dockerfile generated, building image via HTTP API",
+      );
+
+      imageResult = await buildImageFromContext({
         contextDir: nixpacksResult.contextDir,
         dockerfile: nixpacksResult.dockerfile,
-      },
-      "Dockerfile generated, building image via HTTP API",
-    );
-
-    const imageResult = await buildImageFromContext({
-      contextDir: nixpacksResult.contextDir,
-      dockerfile: nixpacksResult.dockerfile,
-      tag: payload.imageTag,
-      buildArgs: payload.envVars,
-      labels: {
-        "deployx.project-id": payload.projectId,
-        "deployx.deployment-id": payload.deploymentId,
-      },
-    });
+        tag: payload.imageTag,
+        buildArgs: payload.envVars,
+        labels,
+      });
+    }
 
     // Update deployment with build results
     await db
@@ -130,7 +154,8 @@ export async function handleBuildJob(ctx: JobContext): Promise<void> {
     logger.info(
       {
         imageTag: imageResult.imageTag,
-        nixpacksMs: nixpacksResult.durationMs,
+        buildType: payload.buildType,
+        nixpacksMs,
         imageBuildMs: imageResult.durationMs,
       },
       "Build succeeded",
