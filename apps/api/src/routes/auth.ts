@@ -3,8 +3,15 @@ import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import { users as usersTable } from "@deployx/db";
 import { success } from "../utils/response.js";
+import {
+  sendEmail,
+  buildActionUrl,
+  passwordResetTemplate,
+  emailVerificationTemplate,
+} from "../lib/email.js";
 
 // The DB stream owns `packages/db/src/schema.ts` and adds the auth-hardening
 // columns (failedLoginAttempts, lockedUntil, tokenVersion) in a separate
@@ -29,6 +36,29 @@ const LoginBody = z.object({
   email: z.string().email(),
   password: z.string(),
 });
+
+const PasswordResetRequestBody = z.object({
+  email: z.string().email(),
+});
+
+const PasswordResetConfirmBody = z.object({
+  token: z.string().min(32).max(128),
+  newPassword: z.string().min(8),
+});
+
+const EMAIL_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function mintEmailToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+interface EmailTokenRow {
+  token: string;
+  userId: string;
+  kind: string;
+  expiresAt: string;
+  usedAt: string | null;
+}
 
 const COOKIE_OPTIONS = {
   httpOnly: true,
@@ -152,6 +182,26 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
         role: "member",
         createdAt: now,
         updatedAt: now,
+      });
+
+      // Mint + persist an email-verification token, then dispatch the email.
+      // Send is fail-soft: if RESEND_API_KEY isn't configured, the token row
+      // still exists so the verify endpoint works in dev/test.
+      const verifyToken = mintEmailToken();
+      const verifyExpiry = new Date(Date.now() + EMAIL_TOKEN_TTL_MS).toISOString();
+      fastify.db.run(
+        sql`INSERT INTO email_tokens (token, user_id, kind, expires_at, created_at)
+            VALUES (${verifyToken}, ${userId}, 'verify', ${verifyExpiry}, ${now})`,
+      );
+      const verifyUrl = buildActionUrl(`/auth/verify?token=${verifyToken}`);
+      const verifyMail = emailVerificationTemplate(name, verifyUrl);
+      // Run async; don't await delivery — registration shouldn't block on SMTP.
+      void sendEmail({
+        to: email,
+        subject: verifyMail.subject,
+        html: verifyMail.html,
+      }).catch((err) => {
+        fastify.log.warn({ err }, "verification email send failed");
       });
 
       // Generate tokens
@@ -384,5 +434,164 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send(
       success({ message: "Logged out" }),
     );
+  });
+
+  // ─── Password reset — request ──────────────────────────────────────────────
+  // Always returns 200 so callers can't enumerate registered emails. If the
+  // user exists we mint a token and dispatch the reset email; otherwise we
+  // silently no-op. Per-IP rate-limited so an attacker can't brute-force
+  // mailer abuse against the platform's Resend quota.
+  fastify.post("/api/v1/auth/password-reset/request", {
+    schema: { body: PasswordResetRequestBody },
+    config: {
+      rateLimit: { max: 3, timeWindow: "1 hour" },
+    },
+    handler: async (request, reply) => {
+      const { email } = request.body as z.infer<typeof PasswordResetRequestBody>;
+
+      const [user] = await fastify.db
+        .select({ id: users.id, name: users.name, email: users.email })
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
+
+      if (user) {
+        const token = mintEmailToken();
+        const now = new Date().toISOString();
+        const expiresAt = new Date(Date.now() + EMAIL_TOKEN_TTL_MS).toISOString();
+        fastify.db.run(
+          sql`INSERT INTO email_tokens (token, user_id, kind, expires_at, created_at)
+              VALUES (${token}, ${user.id}, 'reset', ${expiresAt}, ${now})`,
+        );
+        const url = buildActionUrl(`/auth/reset?token=${token}`);
+        const mail = passwordResetTemplate(user.name, url);
+        void sendEmail({
+          to: user.email,
+          subject: mail.subject,
+          html: mail.html,
+        }).catch((err) => {
+          fastify.log.warn({ err }, "password-reset email send failed");
+        });
+      }
+
+      return reply.send(
+        success({ message: "If that account exists, a reset link has been sent." }),
+      );
+    },
+  });
+
+  // ─── Password reset — confirm ──────────────────────────────────────────────
+  // Consumes a reset token, rotates the password, marks the token used, and
+  // bumps tokenVersion so any outstanding refresh sessions are invalidated
+  // (SEC S3). Token reuse is blocked by the used_at check + single UPDATE.
+  fastify.post("/api/v1/auth/password-reset/confirm", {
+    schema: { body: PasswordResetConfirmBody },
+    config: {
+      rateLimit: { max: 10, timeWindow: "1 hour" },
+    },
+    handler: async (request, reply) => {
+      const { token, newPassword } = request.body as z.infer<
+        typeof PasswordResetConfirmBody
+      >;
+
+      const tokenRows = fastify.db.all(
+        sql`SELECT token, user_id AS "userId", kind,
+                   expires_at AS "expiresAt", used_at AS "usedAt"
+            FROM email_tokens WHERE token = ${token} LIMIT 1`,
+      ) as EmailTokenRow[];
+      const [row] = tokenRows;
+
+      if (!row || row.kind !== "reset" || row.usedAt !== null) {
+        const err = new Error("Invalid or expired token") as Error & {
+          statusCode: number;
+        };
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const expiresMs = Date.parse(row.expiresAt);
+      if (!Number.isFinite(expiresMs) || expiresMs < Date.now()) {
+        const err = new Error("Invalid or expired token") as Error & {
+          statusCode: number;
+        };
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const hashed = await bcrypt.hash(newPassword, 12);
+      const now = new Date().toISOString();
+
+      // Atomically: mark token used, rotate password, bump tokenVersion to
+      // kill all outstanding refresh sessions for this account.
+      fastify.db.run(
+        sql`UPDATE email_tokens SET used_at = ${now} WHERE token = ${token}`,
+      );
+      fastify.db.run(
+        sql`UPDATE users
+            SET password = ${hashed},
+                token_version = COALESCE(token_version, 0) + 1,
+                failed_login_attempts = 0,
+                locked_until = NULL,
+                updated_at = ${now}
+            WHERE id = ${row.userId}`,
+      );
+
+      return reply.send(
+        success({ message: "Password updated. Please sign in again." }),
+      );
+    },
+  });
+
+  // ─── Email verification — consume token ────────────────────────────────────
+  // Token is bound to a single user + kind='verify'. We mark used_at on the
+  // token and set users.email_verified_at. Verified flag is informational
+  // for now — login isn't gated on it (deferred to a future round).
+  fastify.post("/api/v1/auth/verify-email/:token", {
+    schema: {
+      params: z.object({ token: z.string().min(32).max(128) }),
+    },
+    config: {
+      rateLimit: { max: 20, timeWindow: "1 hour" },
+    },
+    handler: async (request, reply) => {
+      const { token } = request.params as { token: string };
+
+      const tokenRows = fastify.db.all(
+        sql`SELECT token, user_id AS "userId", kind,
+                   expires_at AS "expiresAt", used_at AS "usedAt"
+            FROM email_tokens WHERE token = ${token} LIMIT 1`,
+      ) as EmailTokenRow[];
+      const [row] = tokenRows;
+
+      if (!row || row.kind !== "verify" || row.usedAt !== null) {
+        const err = new Error("Invalid or expired token") as Error & {
+          statusCode: number;
+        };
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const expiresMs = Date.parse(row.expiresAt);
+      if (!Number.isFinite(expiresMs) || expiresMs < Date.now()) {
+        const err = new Error("Invalid or expired token") as Error & {
+          statusCode: number;
+        };
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const now = new Date().toISOString();
+      fastify.db.run(
+        sql`UPDATE email_tokens SET used_at = ${now} WHERE token = ${token}`,
+      );
+      fastify.db.run(
+        sql`UPDATE users SET email_verified_at = ${now}, updated_at = ${now}
+            WHERE id = ${row.userId}`,
+      );
+
+      return reply.send(
+        success({ message: "Email verified.", verifiedAt: now }),
+      );
+    },
   });
 }

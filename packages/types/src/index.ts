@@ -90,11 +90,36 @@ export const UserSchema = z.object({
   name: z.string().min(1),
   role: UserRoleSchema.default("member"),
   avatar_url: z.string().url().nullable().optional(),
+  email_verified_at: z.string().datetime().nullable().optional(),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   deleted_at: z.string().datetime().nullable().optional(),
 });
 export type User = z.infer<typeof UserSchema>;
+
+export const EmailTokenKindSchema = z.enum(["reset", "verify"]);
+export type EmailTokenKind = z.infer<typeof EmailTokenKindSchema>;
+
+export const EmailTokenSchema = z.object({
+  token: z.string().min(32).describe("32-byte hex"),
+  user_id: z.string().min(1),
+  kind: EmailTokenKindSchema,
+  expires_at: z.string().datetime(),
+  used_at: z.string().datetime().nullable().optional(),
+  created_at: z.string().datetime(),
+});
+export type EmailToken = z.infer<typeof EmailTokenSchema>;
+
+export const PasswordResetRequestSchema = z.object({
+  email: z.string().email(),
+});
+export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
+
+export const PasswordResetConfirmSchema = z.object({
+  token: z.string().min(32).max(128),
+  newPassword: z.string().min(8),
+});
+export type PasswordResetConfirm = z.infer<typeof PasswordResetConfirmSchema>;
 
 export const ProjectSchema = z.object({
   id: z.string().describe("ULID primary key"),
