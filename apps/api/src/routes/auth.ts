@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { ulid } from "ulidx";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
