@@ -9,9 +9,12 @@ import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
 import websocket from "@fastify/websocket";
 import {
+  jsonSchemaTransform,
   serializerCompiler,
   validatorCompiler,
 } from "fastify-type-provider-zod";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
 import { ulid } from "ulidx";
 
 import { createDb, probeDb } from "@deployx/db";
@@ -115,6 +118,48 @@ export async function buildApp() {
   // custom plugins
   await app.register(errorHandlerPlugin);
   await app.register(authPlugin);
+
+  // OpenAPI + Swagger UI — auto-generates the spec from the Zod schemas
+  // registered via fastify-type-provider-zod, then mounts the browseable UI
+  // at /api/docs. Registered AFTER the validator/serializer compilers + auth
+  // plugin and BEFORE any route plugin so every subsequent route is captured.
+  await app.register(swagger, {
+    openapi: {
+      info: {
+        title: "DeployX API",
+        description:
+          "Control-plane API for DeployX. All endpoints under /api/v1 require a Bearer access token unless explicitly marked public.",
+        version: process.env["DEPLOYX_VERSION"] ?? "0.1.0",
+      },
+      servers: [
+        {
+          url: `https://${process.env["PLATFORM_DOMAIN"] ?? "localhost"}`,
+          description: "This DeployX instance",
+        },
+      ],
+      components: {
+        securitySchemes: {
+          bearerAuth: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+          },
+        },
+      },
+      security: [{ bearerAuth: [] }],
+    },
+    transform: jsonSchemaTransform,
+  });
+
+  await app.register(swaggerUi, {
+    routePrefix: "/api/docs",
+    uiConfig: {
+      docExpansion: "list",
+      deepLinking: true,
+      persistAuthorization: true,
+    },
+    staticCSP: true,
+  });
 
   // --- database ---
   const db = createDb(process.env["DB_PATH"] ?? "./data/platform.db");
