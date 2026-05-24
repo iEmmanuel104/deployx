@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@deployx/types": "workspace:*",
+    "dotenv": "^17.4.2",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

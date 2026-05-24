@@ -1,6 +1,7 @@
 // Load .env in dev. In production the systemd unit sources /etc/deployx/.env
 // before launching node, so this is a no-op when env vars are already set.
-import "dotenv/config";
+import { loadEnv } from "@deployx/config";
+loadEnv();
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -33,34 +34,6 @@ import { apiTokenRoutes } from "./routes/api-tokens.js";
 
 const PORT = Number(process.env["PORT"] ?? 3001);
 const HOST = "0.0.0.0";
-
-// S1 — Fail-fast on insecure secrets. We refuse to start with either secret
-// missing or set to the documented placeholder; running with a known-default
-// secret in production would let anyone mint valid JWTs / decrypt env vars.
-// Skipped under NODE_ENV=test so the in-memory test harness can set its own.
-function assertProductionSecrets(): void {
-  if (process.env["NODE_ENV"] === "test") return;
-  const jwtSecret = process.env["JWT_SECRET"];
-  if (!jwtSecret || jwtSecret === "change-me-in-production") {
-    console.error(
-      "[fatal] JWT_SECRET is missing or set to the default placeholder. " +
-        "Generate a strong secret (e.g. `openssl rand -hex 32`) and set it " +
-        "in /etc/deployx/.env before starting.",
-    );
-    process.exit(1);
-  }
-  const encKey = process.env["ENCRYPTION_KEY"];
-  if (!encKey || encKey === "change-me-in-production") {
-    console.error(
-      "[fatal] ENCRYPTION_KEY is missing or set to the default placeholder. " +
-        "Generate a 32-byte hex key (e.g. `openssl rand -hex 32`) and set it " +
-        "in /etc/deployx/.env before starting.",
-    );
-    process.exit(1);
-  }
-}
-
-assertProductionSecrets();
 
 export async function buildApp() {
   const app = Fastify({
