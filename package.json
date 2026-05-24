@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
+    "test:e2e": "scripts/up-local.sh && pnpm -F @deployx/dashboard test:e2e && scripts/down-local.sh",
     "db:generate": "pnpm -F @deployx/db generate",
     "db:migrate": "pnpm -F @deployx/db migrate"
   },
