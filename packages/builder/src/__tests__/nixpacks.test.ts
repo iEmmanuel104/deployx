@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockExecFile, mockMkdtemp, mockRename, mockRm, mockAccess } = vi.hoisted(() => ({
+const { mockExecFile, mockMkdtemp, mockCp, mockRm, mockAccess } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
   mockMkdtemp: vi.fn(),
-  mockRename: vi.fn(),
+  mockCp: vi.fn(),
   mockRm: vi.fn(),
   mockAccess: vi.fn(),
 }));
@@ -16,7 +16,7 @@ vi.mock("node:util", () => ({
 }));
 vi.mock("node:fs/promises", () => ({
   mkdtemp: mockMkdtemp,
-  rename: mockRename,
+  cp: mockCp,
   rm: mockRm,
   access: mockAccess,
 }));
@@ -32,7 +32,7 @@ describe("buildWithNixpacks", () => {
     });
     mockMkdtemp.mockResolvedValue("/tmp/deployx-nixpacks-test-out");
     mockAccess.mockResolvedValue(undefined);
-    mockRename.mockResolvedValue(undefined);
+    mockCp.mockResolvedValue(undefined);
     mockRm.mockResolvedValue(undefined);
   });
 

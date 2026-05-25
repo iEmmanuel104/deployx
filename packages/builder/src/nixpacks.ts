@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, rename, rm, access } from "node:fs/promises";
+import { mkdtemp, cp, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ulid } from "ulidx";
@@ -129,7 +129,11 @@ export async function buildWithNixpacks(
 
   const targetNixpacks = join(options.sourceDir, ".nixpacks");
   await rm(targetNixpacks, { recursive: true, force: true }).catch(() => {});
-  await rename(nixpacksSubdir, targetNixpacks);
+  // Use cp (not rename): outDir lives in the OS tmpdir (container overlay fs)
+  // while sourceDir is the cloned repo on the /builds Docker volume — a
+  // different device. rename() across devices throws EXDEV, so copy then
+  // remove the source.
+  await cp(nixpacksSubdir, targetNixpacks, { recursive: true });
   await rm(outDir, { recursive: true, force: true }).catch(() => {});
 
   const buildLog = stdout + (stderr ? `\n--- stderr ---\n${stderr}` : "");
